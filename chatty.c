@@ -25,6 +25,7 @@
 #include <sys/socket.h>
 #include <sys/un.h>
 #include <sys/select.h>
+#include <fcntl.h>
 
 #if 0
 #include "./headers/macrothread.h"
@@ -64,26 +65,33 @@
  */
 struct statistics  chattyStats = { 0,0,0,0,0,0,0 };
 
+
 /* struttura contenente i valori di configurazione, struct conf_values
    definita in conf_parsing.h
 */
-struct conf_values val = { NULL, 0, 0, 0, 0, 0, NULL, NULL };
+static struct conf_values val = { NULL, 0, 0, 0, 0, 0, NULL, NULL };
 
- //coda condivisa: il listener mette fd e i thread del pool li estraggono
-queue_t *forwardQ = NULL;
+//coda condivisa: il listener mette fd e i thread del pool li estraggono
+//static queue_t *forwardQ = NULL;
 
 
-int sig_halt_received = 0;
+static int comm_pipe[2];
 
-fd_set set; //insieme dei fd attivi
+//variabile globale, viene settata a 1 alla ricezione di un segnale tra SIGINT, SIGTERM, SIGQUIT
+volatile sig_atomic_t sigstop = 0;
+volatile sig_atomic_t sigusr = 0;
 
-icl_hash_t *hashtable = NULL; //tabella hash per la registrazione dei client alla chat
+static fd_set set; //insieme dei fd attivi
 
-list_t *user_list = NULL; //lista degli utenti connessi
+static icl_hash_t *hashtable = NULL; //tabella hash per la registrazione dei client alla chat
+
+static list_t *user_list = NULL; //lista degli utenti connessi
 
 static pthread_mutex_t mtex_stats = PTHREAD_MUTEX_INITIALIZER;
 static pthread_mutex_t mtex_set = PTHREAD_MUTEX_INITIALIZER;
+static pthread_mutex_t mtex_pipe = PTHREAD_MUTEX_INITIALIZER;
 
+static pthread_cond_t cond_pipe = PTHREAD_COND_INITIALIZER;
 
 
 /**
@@ -138,6 +146,11 @@ int elab_request(int fd, message_t message);
 int sig_manager();
 
 
+
+void termination_handler(int sig);
+
+void stats_handler(int sig);
+
 /**
     @function usage
     @brief stampa su stderr la modalita d'utilizzo corretta del programma
@@ -150,12 +163,23 @@ static void usage(const char *progname) {
 }
 
 
+
+
 int main(int argc, char *argv[]) {
     int conf_verifier = 0;
     struct sockaddr_un sa;
-//    struct sigaction siga;
+
     pthread_t tid_listener;
     pthread_t *thread_pool;
+
+
+
+    if (-1 == sig_manager()) { //serve davvero il questo controllo ?
+        printf("installazione del gestore dei segnali fallita\n");
+        exit(EXIT_FAILURE);
+    } else {
+        printf("installazione del gestore dei segnali avvenuta con successo!\n");
+    }
 
     if (3 != argc){
         usage("chatty");
@@ -183,8 +207,6 @@ int main(int argc, char *argv[]) {
     sa.sun_family = AF_UNIX;
 
 
-
-
     //creazione tabella hash
     hashtable = icl_hash_create(HASHTABLE_LENGTH, NULL, NULL, val.MaxConnections);
 
@@ -200,7 +222,17 @@ int main(int argc, char *argv[]) {
 #endif
 
     thread_pool = (pthread_t *)malloc(val.ThreadsInPool * sizeof(pthread_t)); //creazione del pool di thread che gestiranno le richieste dei client
-    forwardQ = createQ(val.MaxConnections); //creo una coda per i fd; il listener pusha fd, i thread del pool poppano
+    //forwardQ = createQ(val.MaxConnections); //creo una coda per i fd; il listener pusha fd, i thread del pool poppano
+
+    if (0 != pipe(comm_pipe)) {
+        printf("fallimento nella creazione della pipe di comunicazione tra listener e thread_pool\n");
+        exit(EXIT_FAILURE);
+    }
+
+    if (fcntl(comm_pipe[0], F_SETFL, O_NONBLOCK) < 0) {
+        perror("fcntl error");
+        exit(EXIT_FAILURE);
+    }
 
     //printf("ciao\n");
 
@@ -239,11 +271,57 @@ int sig_manager() {
 
     memset(&siga, 0, sizeof(siga));
 
+    siga.sa_handler = SIG_IGN;
+
+    ec_meno1(sigaction(SIGPIPE, &siga, NULL), "sigaction error");
+
+    siga.sa_handler = termination_handler;
+
+    ec_meno1(sigaction(SIGINT, &siga, NULL), "sigaction error");
+    ec_meno1(sigaction(SIGTERM, &siga, NULL), "sigaction error");
+    ec_meno1(sigaction(SIGQUIT, &siga, NULL), "sigaction error");
+
     //ricordarsi di bloccare i segnali esplicitamente durante la gestione di ogni singolo segnale
+
+    siga.sa_handler = stats_handler;
+
+    ec_meno1(sigaction(SIGUSR1, &siga, NULL), "sigaction error");
+
+    ec_meno1(sigemptyset(&set), "sigemptyset error"); //svuoto il set
+    ec_meno1(pthread_sigmask(SIG_SETMASK, &set, NULL), "sigmask error");
 
     return 0;
 }
 
+
+void termination_handler(int sig) {
+
+    struct {
+        int signum;
+        char *msg;
+    } sigmsg[] = {
+        { SIGTERM, "segnale di terminazione catturato"},
+        { SIGINT, "segnale di interruzione catturato"},
+        { SIGQUIT, "segnale di quit catturato"},
+        { 0, NULL}
+    };
+
+    sigstop = 1; //il programma deve terminare
+
+    for (int i = 0; sigmsg[i].signum > 0; i++) {
+        if (sigmsg[i].signum == sig) {
+            write(1, sigmsg[i].msg, strlen(sigmsg[i].msg));
+            write(1, "\n", 1);
+            break;
+        }
+    }
+    _exit(EXIT_FAILURE);
+}
+
+void stats_handler(int sig) {
+
+    sigusr = 1;
+}
 
 int update_stats(struct statistics *chattyStats, int nu, int no, int nd, int nnd, int nfd, int nfnd, int ne){
 
@@ -257,7 +335,7 @@ int update_stats(struct statistics *chattyStats, int nu, int no, int nd, int nnd
     chattyStats->nfilenotdelivered += (nfnd);
     chattyStats->nerrors += (ne);
 
-    if(chattyStats->nusers < 0 || chattyStats->nonline < 0 || chattyStats->ndelivered < 0 ||
+    if (chattyStats->nusers < 0 || chattyStats->nonline < 0 || chattyStats->ndelivered < 0 ||
         chattyStats->nnotdelivered < 0 || chattyStats->nfiledelivered < 0 || chattyStats->nfilenotdelivered < 0 ||
         chattyStats->nerrors < 0){
             printf("error: illegal stat value\n");
@@ -275,7 +353,7 @@ int update_stats(struct statistics *chattyStats, int nu, int no, int nd, int nnd
 
 
 
-static void *run_listener(void * arg){
+void *run_listener(void * arg){
 
     int fd_skt, //socket di connessione
         fd_c, //socket di I/O con un client
@@ -310,11 +388,25 @@ static void *run_listener(void * arg){
     FD_SET(fd_skt,&set);
 //    printf("fd_num dopo : %d\n", fd_num);
 //    printf("fd_skt : %d\n", fd_skt);
-    while (!sig_halt_received) {
+    while (!sigstop) {
+
         THREAD(pthread_mutex_lock(&mtex_set), "lock in run_listener");
         rdset = set;
         THREAD(pthread_mutex_unlock(&mtex_set), "unlock in run_listener");
 //        printf("sono arrivato qui1\n" );
+
+        if (sigusr) {
+            FILE *statfile = fopen(val.StatFileName, "a+");
+            sigusr = 0;
+
+            if(!statfile) {
+                printf("open del file delle statistiche fallita, le statistiche richieste non verranno appese al file\n");
+            } else {
+                THREAD(pthread_mutex_lock(&mtex_stats), "lock in run_listener");
+                printStats(statfile);
+                THREAD(pthread_mutex_unlock(&mtex_stats), "unlock in run_listener");
+            }
+        }
 
         int sel = select((fd_num + 1), &rdset, NULL, NULL, &timeout);
         if (-1 ==  sel){
@@ -324,7 +416,7 @@ static void *run_listener(void * arg){
 //            printf("sono arrivato qui2\n" );
 
             for (fd = 0; fd <= fd_num; fd++) {
-                printf("controllo il seguente fd: %d\n", fd);
+                //printf("controllo il seguente fd: %d\n", fd);
                 if (FD_ISSET(fd, &rdset)) {
 
                     if (fd == fd_skt) { //nuova connessione con un client
@@ -349,7 +441,7 @@ static void *run_listener(void * arg){
                             FD_SET(fd_c, &set);
                             THREAD(pthread_mutex_unlock(&mtex_set), "unlock in run_listener");
                             //il client non e' ancora online
-                            printf("nuova connessione con un client, il fd e': %d\n", fd_c);
+                            //printf("nuova connessione con un client, il fd e': %d\n", fd_c);
                             if (fd_c > fd_num) fd_num = fd_c;
                         }
                     } else { //passo il fd ad un thread per elaborare le richieste
@@ -359,8 +451,17 @@ static void *run_listener(void * arg){
                         THREAD(pthread_mutex_unlock(&mtex_set), "unlock in run_listener");
 
                         //pusho il fd nella coda
-                        printf("sto facendo la push del file descriptor %d\n", fd);
-                        pushQ(forwardQ, fd); //aggiungere ec_meno1?
+                        //printf("sto facendo la push del file descriptor %d\n", fd);
+
+                        if (-1 == write(comm_pipe[1], &fd, sizeof(int))) {
+                            perror("write nel listener");
+                            continue;
+                        }
+
+                        THREAD(pthread_cond_signal(&cond_pipe),"signal in run_listener");
+
+
+                        //pushQ(forwardQ, fd); //aggiungere ec_meno1?
 //                        printf("al thread listener e' arrivato il seguente fd : %d\n", fd);
 
 
@@ -381,7 +482,7 @@ static void *run_listener(void * arg){
                 }
             }
         } else if (0 == sel){
-            printf("timeout expired\n");
+        //    printf("timeout expired\n");
             timeout.tv_sec = 0;
             timeout.tv_usec = 10000;
         }
@@ -391,34 +492,69 @@ static void *run_listener(void * arg){
 
 
 
-static void* run_pool_element(void *arg){
+void* run_pool_element(void *arg){
 
     message_t msg;
 
-    while (!sig_halt_received) {
-        int fd = popQ(forwardQ);
+    while (!sigstop) {
+        //int fd = popQ(forwardQ);
+        int fd = -1;
+        int res = -1;
 
-        printf("un thread e' arrivato qui il thread %lu\n", pthread_self());
+        THREAD(pthread_mutex_lock(&mtex_pipe), "lock in run_pool_element");
+
+        while (-1 == res) {
+
+            res = read(comm_pipe[0], &fd, sizeof(int));
+
+            if (-1 == res) {
+
+                if (errno == EAGAIN) {
+                    THREAD(pthread_cond_wait(&cond_pipe, &mtex_pipe), "wait in run_pool_element");
+                } else {
+                    perror("read in un worker; fallimento nella retrieve di un fd");
+                    pthread_exit(NULL);
+                }
+
+            }
+
+
+        }
+
+        THREAD(pthread_mutex_unlock(&mtex_pipe), "unlock in run_pool_element");
+
+        //printf("il file descriptor e' %d\n", fd);
+
+        //printf("un thread e' arrivato qui, il thread %lu\n", pthread_self());
 
         int r = readHeader(fd, &msg.hdr);
 
         if (r < 0) {
 
             printf("errore lettura dell'header\n");
-            perror("leggendo header:");
-            free(msg.data.buf);
+            perror("leggendo header");
+        //    free(msg.data.buf);
 
         } else if (r > 0){
 
             int ans = elab_request(fd, msg);
-            free(msg.data.buf);
+            //free(msg.data.buf);
 
             if (ans < 0){
                 printf("errore nell'elaborazione del messaggio, %d non verra' aggiunto nuovamente alla coda\n", fd);
+
+                if (user_list->numb_elems > 0) {
+                    //l'utente viene disconnesso (e quindi eliminato dalla lista dei connessi)
+                    user_list = deleteFdFromList(user_list, fd);
+
+                    int check_stats = update_stats(&chattyStats, 0, -1, 0, 0, 0, 0, 0);//diminuisco il numero degli utenti connessi
+                }
+                //controllare se aggiungere la lock
+                //controllare se aggiungere anche deleteFdFromList
+
                 //???int control = update_stats(&chattyStats, 0, 1, 0, 0, 0, 0, 0);
-                //if (-1 == control) //invia segnale che arresta il programma
             } else if (0 == ans){
-                printf("elaborazione del messaggio avvenuta con successo, %d verra' aggiunto nuovamente alla coda\n", fd);
+                //printf("elaborazione del messaggio avvenuta con successo, %d verra' aggiunto nuovamente alla coda\n", fd);
 
                 THREAD(pthread_mutex_lock(&mtex_set), "lock in run_pool_element");
                 FD_SET(fd, &set);
@@ -438,8 +574,10 @@ static void* run_pool_element(void *arg){
             user_list = deleteFdFromList(user_list, fd);
 
             int check_stats = update_stats(&chattyStats, 0, -1, 0, 0, 0, 0, 0);//diminuisco il numero degli utenti connessi
+
+            printf("numero utenti connessi: %lu  \n", chattyStats.nonline);
+
             if (-1 == check_stats){
-                //segnale che arresta il programma
             }
 
             printf("lettura su %d terminata, il fd non verra' aggiunto nuovamente alla coda\n", fd);
@@ -467,25 +605,23 @@ int elab_request(int fd_c, message_t message){
         return -1;
     }
 
-
     //elaboro le richieste
     switch (message.hdr.op) {
 
 
-
 //oooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooo//
 //oooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooo//
-
 
 
         case REGISTER_OP: {
 
-            printf("richiesta di registrazione\n" );
+            printf("%s: richiesta di registrazione\n", sender);
 
             user_data_t *usrdt = (user_data_t *)malloc(sizeof(user_data_t));
 
             //errore nell'inizializzazione della struttura che contiene i dati dell'utente
-            if (-1 == user_data_init(usrdt, fd_c, val.MaxMsgSize, val.MaxFileSize, val.MaxHistMsgs)){
+            if (-1 == user_data_init(usrdt, sender, fd_c, val.MaxMsgSize, val.MaxFileSize, val.MaxHistMsgs)){
+                //inviare un messaggio al client dove si dice "registrazione fallita, riprovare" ?
                 return -1;
                 update_stats(&chattyStats, 0, 0, 0, 0, 0, 0, 1); //aumento il numero degli errori
             }
@@ -541,7 +677,7 @@ int elab_request(int fd_c, message_t message){
 
             user_list = insertListHead(user_list, sender, fd_c); //aggiunge il nick e il fd alla lista degli utenti connessi
 
-            char * buffer = toBuf(user_list); //memorizza nel buffer da inviare la lista degli utenti connessi
+            char *buffer = toBuf(user_list); //memorizza nel buffer da inviare la lista degli utenti connessi
             int length = strlen(buffer); //lunghezza del buffer
 
             //setto Header e Dati per la risposta del server al client
@@ -560,18 +696,18 @@ int elab_request(int fd_c, message_t message){
         } break;
 
 
-
 //oooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooo//
 //oooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooo//
-
 
 
         case CONNECT_OP: {
 
-            printf("richiesta di connessione\n" );
+            printf("%s: richiesta di connessione\n", sender);
+
+            user_data_t *usrdt = (user_data_t *)icl_hash_find(hashtable, sender);
 
             //il client che tenta di connettersi non e' registrato
-            if (NULL == icl_hash_find(hashtable, sender)){
+            if (NULL == usrdt){
 
                 printf("il client %s non e' registrato\n", sender);
 
@@ -612,8 +748,11 @@ int elab_request(int fd_c, message_t message){
                 user_list = insertListHead(user_list, sender, fd_c); //aggiunge il nick e il fd alla lista degli utenti connessi
             }
 
-            char * buffer = toBuf(user_list); //memorizza nel buffer da inviare la lista degli utenti connessi
+            char * buffer =  toBuf(user_list); //memorizza nel buffer da inviare la lista degli utenti connessi
             int length = strlen(buffer); //lunghezza del buffer
+
+            //aggiorno il fd relativo all'utente col nuovo fd sulla quale avverra' la comunicazione client-server
+            update_user_fd(usrdt, fd_c);
 
             //setto Header e Dati per la risposta del server al client
             setHeader(&reply_msg.hdr, OP_OK, "");
@@ -631,15 +770,13 @@ int elab_request(int fd_c, message_t message){
         } break;
 
 
-
 //oooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooo//
 //oooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooo//
-
 
 
         case POSTTXT_OP: {
 
-            printf("richiesta di invio a un utente di un messaggio\n" );
+            printf("%s: richiesta di invio a un utente di un messaggio\n", sender);
             //il client che tenta di inviare un messaggio non e' registrato
             if (NULL == icl_hash_find(hashtable, sender)){
 
@@ -672,8 +809,10 @@ int elab_request(int fd_c, message_t message){
             int buf_len = message.data.hdr.len; //lunghezza del messaggio
 
 
+            user_data_t *dest = icl_hash_find(hashtable, receiver);
+
             //se il nickname del destinatario non e' registrato
-            if (NULL == icl_hash_find(hashtable, receiver)) {
+            if (NULL == dest) {
 
                 printf("il nickname destinatario scelto non e' iscritto a Chatty\n");
 
@@ -701,10 +840,6 @@ int elab_request(int fd_c, message_t message){
 
             //operazione ha avuto successo
 
-            user_data_t *dest = icl_hash_find(hashtable, receiver);
-
-            //setta l'header del messaggio di risposta dal server per il mittente di POSTTXT_OP
-            setHeader(&reply_msg.hdr, OP_OK, "");
 
             message_t msg_to_deliver;
 
@@ -717,25 +852,39 @@ int elab_request(int fd_c, message_t message){
 
                 printf("il destinatario e' offline, aggiungo il messaggio alla lista dei messaggi che deve leggere\n");
 
+                update_stats(&chattyStats, 0, 0, 0, 1, 0, 0, 0); //aumento il numero dei messaggi non letti
+
                 //aggiorno la history del destinatario e marco il messaggio come non letto
-                if (-1 == add_to_history(dest, &msg_to_deliver, 0)){
+                if (-1 == add_to_history(dest, &msg_to_deliver, 0, 0)){
+                    setHeader(&reply_msg.hdr, OP_FAIL, "");
+
+                    if (sendHeader(fd_c, &reply_msg.hdr) <= 0)
+                        return -1;
+
                     return 1; //history del destinatario piena, il fd del mittente verra' rimesso in coda
                 }
 
-                update_stats(&chattyStats, 0, 0, 0, 1, 0, 0, 0); //aumento il numero dei messaggi non letti
 
             } else { //se il destinatario e' online
 
                 printf("il destinatario e' online, messaggio inviato con successo\n");
 
+                update_stats(&chattyStats, 0, 0, 1, 0, 0, 0, 0);//aumento il numero dei messaggi letti
+
                 //aggiorno la history del destinatario e marco il messaggio come letto
-                if (-1 == add_to_history(dest, &msg_to_deliver, 1)){
+                if (-1 == add_to_history(dest, &msg_to_deliver, 1, 0)){
+                    setHeader(&reply_msg.hdr, OP_FAIL, "");
+
+                    if (sendHeader(fd_c, &reply_msg.hdr) <= 0)
+                        return -1;
+
                     return 1; //history del destinatario piena, il fd del mittente verra' rimesso in coda
                 }
 
-                update_stats(&chattyStats, 0, 0, 1, 0, 0, 0, 0);//aumento il numero dei messaggi letti
             }
 
+            //setta l'header del messaggio di risposta dal server per il mittente di POSTTXT_OP
+            setHeader(&reply_msg.hdr, OP_OK, "");
 
             if (sendHeader(fd_c, &reply_msg.hdr) <= 0)
                 return -1;
@@ -743,15 +892,13 @@ int elab_request(int fd_c, message_t message){
         } break;
 
 
-
 //oooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooo//
 //oooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooo//
-
 
 
         case POSTTXTALL_OP: {
-#if 0
-            printf("richiesta di invio a tutti di un messaggio\n");
+
+            printf("%s: richiesta di invio a tutti di un messaggio\n", sender);
 
             //il client che tenta di inviare un messaggio non e' registrato
             if (NULL == icl_hash_find(hashtable, sender)){
@@ -797,64 +944,41 @@ int elab_request(int fd_c, message_t message){
 
 
             //operazione ha avuto successo
-            int i;
-            icl_entry_t *j;
-            char *kp;
-            user_data_t *dp;
 
             //setta l'header del messaggio di risposta dal server per il mittente di POSTTXTALL_OP
             setHeader(&reply_msg.hdr, OP_OK, "");
 
-            icl_hash_foreach(hashtable, i, j, kp, dp){ //per ogni elemento della tabella hash
+            message_t msg_to_deliver; //messaggio da inviare a tutti gli utenti registrati
 
-                message_t msg_to_deliver; //messaggio da inviare al destinatario
+            setHeader(&msg_to_deliver.hdr, TXT_MESSAGE, sender);
+            setData(&msg_to_deliver.data, "", message.data.buf, message.data.hdr.len);
 
-                setHeader(&msg_to_deliver.hdr, TXT_MESSAGE, sender);
-                setData(&msg_to_deliver.data, curr->word, message.data.buf, message.data.hdr.len);
+            int nonline, noffline = 0; //numero di utenti online e offline al momento dell'invio a tutti del messaggio
 
-                int ans = sendRequest(curr->fd, &msg_to_deliver);
-
-                if (-1 == ans) { //il destinatario e' offline
-
-                    printf("il destinatario e' offline, aggiungo il messaggio alla lista dei messaggi che deve leggere\n");
-
-                    //aggiorno la history del destinatario e marco il messaggio come non letto
-                    if (-1 == add_to_history(dest, &msg_to_deliver, 0)){
-                        return 1; //history del destinatario piena, il fd del mittente verra' rimesso in coda
-                    }
-
-                    update_stats(&chattyStats, 0, 0, 0, 1, 0, 0, 0);//aumento il numero dei messaggi testuali non consegnati
-
-                } else { //il destinatario e' online
-                    printf("il destinatario e' online, messaggio inviato con successo\n");
-
-                    //aggiorno la history del destinatario e marco il messaggio come letto
-                    if (-1 == add_to_history(dest, &msg_to_deliver, 1)){
-                        return 1; //history del destinatario piena, il fd del mittente verra' rimesso in coda
-                    }
-
-                    update_stats(&chattyStats, 0, 0, 1, 0, 0, 0, 0);//aumento il numero dei messaggi testuali consegnati
-                }
-
+            //invio il messaggio a tutti gli utenti regstrati e lo aggiungo nella history di ognuno
+            if (1 == add_to_history_all(hashtable, sender, &msg_to_deliver, &nonline, &noffline)) {
+                return 1;
             }
 
+            //aumento sia il numero dei messaggi consegnati che quelli non consegnati
+            //in accordo all'aggiornamento ai contatori nonline e noffline fatto da add_to_history_all
+            update_stats(&chattyStats, 0, 0, nonline, noffline, 0, 0, 0);
+
+            printf("i messaggi consegnati con successo sono %d, quelli non consegnati sono %d\n", nonline, noffline);
 
             if (sendHeader(fd_c, &reply_msg.hdr) <= 0)
                 return -1;
-#endif
+
         } break;
 
 
-
 //oooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooo//
 //oooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooo//
-
 
 
         case POSTFILE_OP: {
 
-
-            printf("richiesta di post di un file\n");
+            printf("%s: richiesta di post di un file\n", sender);
 
             //il client che tenta di inviare il file non e' registrato
             if (NULL == icl_hash_find(hashtable, sender)){
@@ -892,8 +1016,7 @@ int elab_request(int fd_c, message_t message){
             printf("questa e' la size del file che si vuole inviare: %d\n", fileData.hdr.len);
 
             //se il file e' troppo grande per essere inviato
-            if (fileData.hdr.len > val.MaxFileSize) {
-
+            if (fileData.hdr.len > (val.MaxFileSize * 1024)) { //moltiplico per 1024 perche' MaxFileSize e' espressa in Kbytes
 
                 printf("errore: file troppo grande per essere inviato\n");
 
@@ -908,8 +1031,27 @@ int elab_request(int fd_c, message_t message){
             }
 
 
+            char *receiver = message.data.hdr.receiver; //nickname del destinatario
+            //int buf_len = message.data.hdr.len;
+
+            user_data_t *dest = icl_hash_find(hashtable, receiver);
+
+            //se il nickname del destinatario non e' registrato a Chatty
+            if (NULL == dest) {
+
+                printf("il nickname destinatario scelto non e' iscritto a Chatty\n");
+
+                setHeader(&reply_msg.hdr, OP_NICK_UNKNOWN, "");
+                sendHeader(fd_c, &reply_msg.hdr);
+
+                update_stats(&chattyStats, 0, 0, 0, 0, 0, 0, 1); //aumento il numero degli errori
+
+                return -1;
+            }
+
 
             //il file puo' essere inviato
+
             int pathlen = strlen(val.DirName) + strlen(message.data.buf) + 2; // byte aggiuntivo per lo slash l'altro per il terminatore
 
             //costruisco il path del file
@@ -934,15 +1076,17 @@ int elab_request(int fd_c, message_t message){
             //apro il file
             FILE *file_to_deliver = fopen(path, "w");
 
-            if (NULL == file_to_deliver){ //se fallisce l'apertura
+            if (!file_to_deliver){ //se fallisce l'apertura
                 printf("errore nell'open del file in %s\n", path);
+                setHeader(&reply_msg.hdr, OP_FAIL, "");
+                sendHeader(fd_c, &reply_msg.hdr);
+
+                update_stats(&chattyStats, 0, 0, 0, 0, 0, 0, 1); //aumento il numero degli errori
                 return -1;
             }
 
-
             int x = fwrite(fileData.buf, sizeof(char), fileData.hdr.len, file_to_deliver);
 
-            printf("%d\n", x);
             if (x != fileData.hdr.len) { //se c'e' un errore nella scrittura
                 printf("errore nella scrittura\n");
                 return -1;
@@ -953,27 +1097,8 @@ int elab_request(int fd_c, message_t message){
                 return -1;
             }
 
-            char *receiver = message.data.hdr.receiver; //nickname del destinatario
-            //int buf_len = message.data.hdr.len;
-
-
-            user_data_t *dest = icl_hash_find(hashtable, receiver);
-            //se il nickname del destinatario non e' registrato a Chatty
-            if (NULL == dest) {
-
-                printf("il nickname destinatario scelto non e' iscritto a Chatty\n");
-
-                setHeader(&reply_msg.hdr, OP_NICK_UNKNOWN, "");
-                sendHeader(fd_c, &reply_msg.hdr);
-
-                update_stats(&chattyStats, 0, 0, 0, 0, 0, 0, 1); //aumento il numero degli errori
-
-                return -1;
-            }
-
 
             //l'operazione ha successo
-
 
             //setto l'header del messaggio di risposta dal server per il mittente di POSTFILE_OP
             setHeader(&reply_msg.hdr, OP_OK, "");
@@ -994,25 +1119,32 @@ int elab_request(int fd_c, message_t message){
 
                 printf("il destinatario e' offline, aggiungo il messaggio file alla lista dei messaggi che deve leggere\n");
 
+                update_stats(&chattyStats, 0, 0, 0, 0, 0, 1, 0); //aumento il numero dei file non consegnati
+
                 //aggiorno la history del destinatario e marco il messaggio come non letto
-                if (-1 == add_to_history(dest, &msg_to_deliver, 0)){
+                if (-1 == add_to_history(dest, &msg_to_deliver, 0, 0)){
+
+                    if (sendHeader(fd_c, &reply_msg.hdr) <= 0)
+                        return -1;
+
                     return 1; //history del destinatario piena, il fd del mittente verra' rimesso in coda
                 }
-
-
-                update_stats(&chattyStats, 0, 0, 0, 1, 0, 1, 0); //aumento il numero dei messaggi non letti e dei file non consegnati
-
 
             } else { //se il destinatario e' online
 
                 printf("il destinatario e' online, messaggio file inviato con successo\n");
 
+                //aumento il numero dei file non consegnati (un file e' consegnato quando l'utente lo riceve a seguito di una GETFILE_OP)
+                update_stats(&chattyStats, 0, 0, 0, 0, 0, 1, 0);
+
                 //aggiorno la history del destinatario e marco il messaggio come letto
-                if (-1 == add_to_history(dest, &msg_to_deliver, 1)){
+                if (-1 == add_to_history(dest, &msg_to_deliver, 1, 0)){
+
+                    if (sendHeader(fd_c, &reply_msg.hdr) <= 0)
+                        return -1;
+
                     return 1; //history del destinatario piena, il fd del mittente verra' rimesso in coda
                 }
-
-                update_stats(&chattyStats, 0, 0, 0, 0, 1, 0, 0);
             }
 
 
@@ -1023,32 +1155,183 @@ int elab_request(int fd_c, message_t message){
         } break;
 
 
-
 //oooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooo//
 //oooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooo//
-
 
 
         case GETFILE_OP: {
 
+            printf("%s: richiesta di get di un file\n", sender);
+
+            //il client che tenta di ricevere un file non e' registrato
+            if (NULL == icl_hash_find(hashtable, sender)){
+
+                printf("il client %s non e' registrato\n", sender);
+
+                setHeader(&reply_msg.hdr, OP_NICK_UNKNOWN, ""); //come sender metto "server"?
+                sendHeader(fd_c, &reply_msg.hdr);
+
+                update_stats(&chattyStats, 0, 0, 0, 0, 0, 0, 1); //aumento il numero degli errori
+
+                return -1;
+            }
+
+
+            //il client che tenta di ricevere un file non e' connesso
+            if (NULL == listFind(user_list, sender)){
+
+                printf("il client %s non e' connesso\n", sender);
+
+                setHeader(&reply_msg.hdr, OP_FAIL, "");
+                sendHeader(fd_c, &reply_msg.hdr);
+
+                update_stats(&chattyStats, 0, 0, 0, 0, 0, 0, 1); //aumento il numero degli errori
+
+                return -1;
+            }
+
+
+            int pathlen = strlen(val.DirName) + strlen(message.data.buf) + 2; // byte aggiuntivo per lo slash l'altro per il terminatore
+
+            //costruisco il path del file
+            char *path = (char *)malloc(pathlen * sizeof(char));
+
+            strncat(path, val.DirName, strlen(val.DirName));
+            strcat(path, "/");
+
+            char *slash  = strrchr(message.data.buf, '/'); //controllo se esiste uno slash in message.data.buf
+
+            if (NULL == slash) {
+                strncat(path, message.data.buf, message.data.hdr.len);
+            } else {
+                slash ++;
+                int len = message.data.hdr.len - (slash - message.data.buf);
+                strncat(path, slash, len);
+            }
+
+
+            //apro il file
+            FILE *file_to_deliver = fopen(path, "r");
+
+            if (!file_to_deliver){ //se fallisce l'apertura
+                printf("errore nell'open del file in %s\n", path);
+                setHeader(&reply_msg.hdr, OP_NO_SUCH_FILE, "");
+                sendHeader(fd_c, &reply_msg.hdr);
+
+                update_stats(&chattyStats, 0, 0, 0, 0, 0, 0, 1); //aumento il numero degli errori
+                return -1;
+            }
+
+
+            //dimensione del file da inviare
+            fseek(file_to_deliver, 0L, SEEK_END);
+            int filesize = ftell(file_to_deliver);
+            rewind(file_to_deliver);
+
+            //alloco la memoria per il buffer che ospitera' il contenuto del file
+            char *buffer = (char *)malloc((filesize+1) * sizeof(char));
+
+            int x = fread(buffer, sizeof(char), filesize, file_to_deliver);
+
+            if (x != filesize) { //se c'e' un errore nella lettura
+                printf("errore nella lettura\n");
+                return -1;
+            }
+
+            if (fclose(file_to_deliver) != 0) {
+                printf("errore nella chiusura del file da inviare\n");
+                return -1;
+            }
+
+            //operazione ha avuto successo
+
+            //aumento il numero dei file consegnati e diminuisco quello dei file non consegnati
+            update_stats(&chattyStats, 0, 0, 0, 0, 1, -1, 0);
+
+            //setta l'header del messaggio di risposta dal server per il mittente di GETFILE_OP
+            setHeader(&reply_msg.hdr, OP_OK, "");
+
+            if (sendHeader(fd_c, &reply_msg.hdr) <= 0)
+                return -1;
+
+            setData(&reply_msg.data, sender, buffer, filesize + 1);
+
+            if (sendData(fd_c, &reply_msg.data) < 0) {
+                return -1;
+            }
         } break;
 
 
-
 //oooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooo//
 //oooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooo//
-
 
 
         case GETPREVMSGS_OP: {
 
+            printf("%s: richiesta di recupero dei messaggi nella history\n", sender);
+
+            user_data_t *usrdt = (user_data_t *)icl_hash_find(hashtable, sender);
+            //il client che tenta di ottenere i messaggi nella history non e' registrato
+            if (NULL == usrdt){
+
+                printf("il client %s non e' registrato\n", sender);
+
+                setHeader(&reply_msg.hdr, OP_NICK_UNKNOWN, ""); //come sender metto "server"?
+                sendHeader(fd_c, &reply_msg.hdr);
+
+                update_stats(&chattyStats, 0, 0, 0, 0, 0, 0, 1); //aumento il numero degli errori
+
+                return -1;
+            }
+
+
+            //il client che tenta di ottenere i messaggi nella history non e' connesso
+            if (NULL == listFind(user_list, sender)){
+
+                printf("il client %s non e' connesso\n", sender);
+
+                setHeader(&reply_msg.hdr, OP_FAIL, "");
+                sendHeader(fd_c, &reply_msg.hdr);
+
+                update_stats(&chattyStats, 0, 0, 0, 0, 0, 0, 1); //aumento il numero degli errori
+
+                return -1;
+            }
+
+
+            //l'operazione ha successo
+
+            //setto Header e Dati per la risposta del server al client
+            setHeader(&reply_msg.hdr, OP_OK, "");
+
+            if (sendHeader(fd_c, &reply_msg.hdr) <= 0) {
+                return -1;
+            }
+
+            int x = usrdt->size;
+
+            setData(&reply_msg.data, "", (char *)&x,sizeof(size_t));
+
+            if (sendData(fd_c, &reply_msg.data) < 0) {
+                return -1;
+            }
+
+            int read_now = 0; //contatore dei messaggi consegnati per la prima volta in questa GETPREVMSGS_OP
+
+            //invia all'utente ogni messaggio presente nella history
+            for (int i = 0; i < usrdt->size; i++) {
+                if (-1 == sendRequest(fd_c, retrieve_from_history(usrdt, i, &read_now))) {
+                    printf("l'utente %s ha fallito il retrieve del messaggio %d della history\n", sender, i);
+                }
+            }
+
+            //aggiorno le statistiche: sono stati consegnati read_now messaggi di quelli non ancora letti
+            update_stats(&chattyStats, 0, 0, read_now, (-read_now), 0, 0, 0);
         } break;
 
 
-
 //oooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooo//
 //oooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooo//
-
 
 
         case USRLIST_OP: {
@@ -1098,16 +1381,11 @@ int elab_request(int fd_c, message_t message){
                 return -1;
             }
 
-
-
         } break;
 
 
-
 //oooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooo//
 //oooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooo//
-
-
 
         case UNREGISTER_OP: {
 
@@ -1140,14 +1418,14 @@ int elab_request(int fd_c, message_t message){
 
             //l'operazione ha successo
 
+#if 0
             //l'utente viene disconnesso (e quindi eliminato dalla lista dei connessi)
             user_list = deleteNameFromList(user_list, sender);
 
             int check_stats = update_stats(&chattyStats, 0, -1, 0, 0, 0, 0, 0);//diminuisco il numero degli utenti connessi
             if (-1 == check_stats){
-                //segnale che arresta il programma
             }
-
+#endif
             //l'utente viene deregistrato
             if (0 != icl_hash_delete(hashtable, sender, NULL, NULL)){
 
@@ -1155,9 +1433,8 @@ int elab_request(int fd_c, message_t message){
                 return -1;
             }
 
-            check_stats = update_stats(&chattyStats, -1, 0, 0, 0, 0, 0, 0);//diminuisco il numero degli utenti registrati
+            int check_stats = update_stats(&chattyStats, -1, 0, 0, 0, 0, 0, 0);//diminuisco il numero degli utenti registrati
             if (-1 == check_stats){
-                //segnale che arresta il programma
             }
 
 
@@ -1170,10 +1447,8 @@ int elab_request(int fd_c, message_t message){
         } break;
 
 
-
 //oooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooo//
 //oooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooo//
-
 
 
         case DISCONNECT_OP: {
@@ -1214,7 +1489,6 @@ int elab_request(int fd_c, message_t message){
 
             int check_stats = update_stats(&chattyStats, 0, -1, 0, 0, 0, 0, 0);//diminuisco il numero degli utenti connessi
             if (-1 == check_stats){
-                //segnale che arresta il programma
             }
 
 
@@ -1226,11 +1500,8 @@ int elab_request(int fd_c, message_t message){
         } break;
 
 
-
 //oooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooo//
 //oooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooo//
-
-
 
         default: {
 
@@ -1242,9 +1513,6 @@ int elab_request(int fd_c, message_t message){
             return -1;
         } break;
 
-
-
     }
-
     return 0;
 }

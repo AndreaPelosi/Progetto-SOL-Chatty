@@ -185,7 +185,7 @@ icl_hash_insert(icl_hash_t *ht, void* key, void *data)
     ht->nentries++;
 
     THREAD(pthread_mutex_unlock( &((ht->mtex_hash)[lock_index]) ),"unlock in icl_hash_insert");
-    printf("questo e' curr->key: %s\n", (char*)curr->key);
+//    printf("questo e' curr->key: %s\n", (char*)curr->key);
 
     return curr;
 }

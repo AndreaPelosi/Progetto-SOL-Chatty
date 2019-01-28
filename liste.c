@@ -15,6 +15,29 @@ list_t *createList(){
 }
 
 
+
+list_t *insertListHead(list_t *L, const char *str, int fd){
+
+    node_t *curr = (node_t *)malloc(sizeof(node_t));
+    curr->word = (char *)malloc((MAX_NAME_LENGTH + 1) * sizeof(char));
+    int len = strlen(str);
+
+    strncpy(curr->word, str, len);
+    for (size_t i = len; i < MAX_NAME_LENGTH + 1; i++) {
+        (curr->word)[i] = ' ';
+    }
+
+    curr->fd = fd;
+
+    curr->next = L->list;
+    L->list = curr;
+    L->numb_elems ++;
+
+    return L;
+}
+
+
+#if 0
 list_t *insertListHead(list_t *L, const char *str, int fd){
 
     node_t *curr = (node_t *)malloc(sizeof(node_t));
@@ -30,16 +53,22 @@ list_t *insertListHead(list_t *L, const char *str, int fd){
 
     return L;
 }
-
+#endif
 
 node_t *listFind(list_t *L, const char *str){
 
     node_t *curr;
+    char *cpy; //variabile che prende ogni utente della lista senza considerare gli spazi
+    int len = strlen(str);
 
     for (curr = L->list; curr != NULL; curr = curr->next) {
-        if (0 == strcmp(curr->word, str)){
+
+        cpy = (char *)malloc(len * sizeof(char));
+        strncpy(cpy, curr->word, len);
+        if (0 == strcmp(cpy, str)){
             return curr;
         }
+        free(cpy);
     }
     return NULL;
 }
@@ -129,6 +158,25 @@ void destroyList(list_t *L){
 }
 
 
+
+char *toBuf(list_t *L) {
+    char *buffer = calloc((L->numb_elems * (MAX_NAME_LENGTH + 1)), sizeof(char));
+	char *aux = buffer;
+    node_t *curr = L->list;
+
+	for (size_t i = 0; i < L->numb_elems; i++) {
+			strcat(aux, curr->word);
+			aux += MAX_NAME_LENGTH+1;
+            curr = curr->next;
+	}
+
+    return buffer;
+}
+
+
+
+#if 0
+
 char *toBuf(list_t *L){
 
     int len;
@@ -144,9 +192,12 @@ char *toBuf(list_t *L){
         len = strlen(curr->word);
 
         char *space_string = (char *)malloc((MAX_NAME_LENGTH + 1 - len) * sizeof(char));
-        for (size_t j = 0; j < (MAX_NAME_LENGTH + 1 - len); j++) {
+
+        for (size_t j = 0; j < (MAX_NAME_LENGTH - len); j++) {
             space_string[j] = ' ';
         }
+
+        space_string[MAX_NAME_LENGTH - len] = '\n';
 
         int len1 = strlen(space_string);
 
@@ -157,3 +208,4 @@ char *toBuf(list_t *L){
 
     return buffer;
 }
+#endif
