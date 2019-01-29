@@ -158,10 +158,30 @@ void destroyList(list_t *L){
 }
 
 
+char *toBuf(list_t *L) {
+    char *buffer = (char *)malloc(L->numb_elems * (MAX_NAME_LENGTH + 1) * sizeof(char));
+    memset(buffer, 0, L->numb_elems * (MAX_NAME_LENGTH + 1) * sizeof(char));
+
+    char *aux = buffer;
+    node_t *curr = L->list;
+
+	for (size_t i = 0; i < L->numb_elems; i++) {
+			strncpy(aux, curr->word, MAX_NAME_LENGTH + 1);
+			aux += MAX_NAME_LENGTH + 1;
+            curr = curr->next;
+	}
+
+    return buffer;
+}
+
+
+#if 0
 
 char *toBuf(list_t *L) {
     char *buffer = calloc((L->numb_elems * (MAX_NAME_LENGTH + 1)), sizeof(char));
-	char *aux = buffer;
+    memset(buffer, 0, L->numb_elems * (MAX_NAME_LENGTH + 1) * sizeof(char));
+
+    char *aux = buffer;
     node_t *curr = L->list;
 
 	for (size_t i = 0; i < L->numb_elems; i++) {
@@ -174,8 +194,6 @@ char *toBuf(list_t *L) {
 }
 
 
-
-#if 0
 
 char *toBuf(list_t *L){
 

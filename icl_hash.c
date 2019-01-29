@@ -75,16 +75,16 @@ static int string_compare(void* a, void* b)
  * @param[in] hash_function -- pointer to the hashing function to be used
  * @param[in] hash_key_compare -- pointer to the hash key comparison function to be used
  * @param[in] divisore_lock -- divisore di nbuckets per calcolare la dimensione dell'array di mutexes
+ * @param[in] dim_array_mtex -- puntatore a intero che prendera' la dimensione dell'array di mutexes
  *
  * @returns pointer to new hash table.
  */
 
 icl_hash_t *
-icl_hash_create( int nbuckets, unsigned int (*hash_function)(void*), int (*hash_key_compare)(void*, void*), int divisore_lock )
+icl_hash_create( int nbuckets, unsigned int (*hash_function)(void*), int (*hash_key_compare)(void*, void*), int divisore_lock,int *dim_array_mtex)
 {
     icl_hash_t *ht;
     int i;
-    int dim_array_mtex;
 
     ht = (icl_hash_t*) malloc(sizeof(icl_hash_t));
     if(!ht) return NULL;
@@ -102,10 +102,10 @@ icl_hash_create( int nbuckets, unsigned int (*hash_function)(void*), int (*hash_
 
     ht->divisore_lock = divisore_lock;
 
-    dim_array_mtex = (int)(nbuckets/divisore_lock);
-    ht->mtex_hash = (pthread_mutex_t*) malloc(dim_array_mtex * sizeof(pthread_mutex_t));
+    *dim_array_mtex = (int)(nbuckets/divisore_lock);
+    ht->mtex_hash = (pthread_mutex_t*) malloc((*dim_array_mtex) * sizeof(pthread_mutex_t));
 
-    for (size_t i = 0; i < dim_array_mtex; i++) {
+    for (size_t i = 0; i < *dim_array_mtex; i++) {
         pthread_mutex_init(&((ht->mtex_hash)[i]), NULL);
     }
     return ht;

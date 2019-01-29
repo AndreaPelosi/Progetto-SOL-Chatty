@@ -207,8 +207,10 @@ int main(int argc, char *argv[]) {
     sa.sun_family = AF_UNIX;
 
 
+    int dim_array_mtex; //size dell'array di mutex per gestire la concorrenza in hashtable
     //creazione tabella hash
-    hashtable = icl_hash_create(HASHTABLE_LENGTH, NULL, NULL, val.MaxConnections);
+    hashtable = icl_hash_create(HASHTABLE_LENGTH, NULL, NULL, val.MaxConnections, &dim_array_mtex);
+
 
     //creazione lista degli utenti connessi
     user_list = createList();
@@ -229,7 +231,7 @@ int main(int argc, char *argv[]) {
         exit(EXIT_FAILURE);
     }
 
-    if (fcntl(comm_pipe[0], F_SETFL, O_NONBLOCK) < 0) {
+    if (fcntl(comm_pipe[0], F_SETFL, O_NONBLOCK) < 0) { //scrivere a che serve
         perror("fcntl error");
         exit(EXIT_FAILURE);
     }
@@ -254,8 +256,25 @@ int main(int argc, char *argv[]) {
     printf("successo!\n");
 
 
-    //fare tutta la pulizia necessaria: chiudere i file descriptor, chiudere fd_skt, distruggere coda, distruggere tutto, fare tutte le free
-    //distruggere tabella hash
+    //libero la memoria dinamica allocata
+
+    destroyList(user_list); //distruggo la lista degli utenti online
+
+    icl_hash_destroy(hashtable, NULL, NULL, dim_array_mtex); //distruggo la tab hash degli utenti registrati
+
+    ec_meno1(close(comm_pipe[0]), "close in main"); //chiudo la pipe sia in lett. che in scritt.
+    ec_meno1(close(comm_pipe[1]), "close in main");
+
+    free(val.UnixPath);
+    free(val.DirName);
+    free(val.StatFileName);
+
+    val.UnixPath = NULL;
+    val.DirName = NULL;
+    val.StatFileName = NULL;
+
+    fflush(stdout);
+
     return 0;
 }
 
@@ -300,9 +319,9 @@ void termination_handler(int sig) {
         int signum;
         char *msg;
     } sigmsg[] = {
-        { SIGTERM, "segnale di terminazione catturato"},
-        { SIGINT, "segnale di interruzione catturato"},
-        { SIGQUIT, "segnale di quit catturato"},
+        { SIGTERM, "segnale di terminazione catturato\n"},
+        { SIGINT, "segnale di interruzione catturato\n"},
+        { SIGQUIT, "segnale di quit catturato\n"},
         { 0, NULL}
     };
 
@@ -359,10 +378,8 @@ void *run_listener(void * arg){
         fd_c, //socket di I/O con un client
         fd, //indice per verificare i risultati della select
         fd_num = 0; //massimo fd attivo
-    //char *buf = (char *)malloc(100*sizeof(char)); //buffer di prova
-    //int nread; //numero di caratteri letti
-        fd_set rdset; //insieme dei fd attesi per la lettura
-//        wrset; //insieme dei fd su cui scrivere
+
+    fd_set rdset; //insieme dei fd attesi per la lettura
 
     //apro la connessione su fd_skt
     fd_skt = socket(AF_UNIX, SOCK_STREAM, 0);
@@ -487,6 +504,18 @@ void *run_listener(void * arg){
             timeout.tv_usec = 10000;
         }
     }
+
+    for (size_t i = 0; i <= fd_num; i++) {
+        //chiudo i fd che potrebbero essere rimasti aperti sia in lettura che in scrittura
+        if (-1 == shutdown(i, SHUT_RDWR)) {
+            perror("shutdown in thread_listener");
+        }
+    }
+
+    if (-1 == close(fd_skt)) {
+        perror("close in thread_listener");
+    }
+
     pthread_exit(NULL);
 }
 
@@ -517,7 +546,6 @@ void* run_pool_element(void *arg){
                 }
 
             }
-
 
         }
 
@@ -764,8 +792,10 @@ int elab_request(int fd_c, message_t message){
             setData(&reply_msg.data, "", buffer, length);
 
             if (sendData(fd_c, &reply_msg.data) < 0) {
+                free(buffer);
                 return -1;
             }
+            free(buffer);
 
         } break;
 
@@ -953,7 +983,8 @@ int elab_request(int fd_c, message_t message){
             setHeader(&msg_to_deliver.hdr, TXT_MESSAGE, sender);
             setData(&msg_to_deliver.data, "", message.data.buf, message.data.hdr.len);
 
-            int nonline, noffline = 0; //numero di utenti online e offline al momento dell'invio a tutti del messaggio
+            int nonline = 0;
+            int noffline = 0; //numero di utenti online e offline al momento dell'invio a tutti del messaggio
 
             //invio il messaggio a tutti gli utenti regstrati e lo aggiungo nella history di ognuno
             if (1 == add_to_history_all(hashtable, sender, &msg_to_deliver, &nonline, &noffline)) {
@@ -1057,7 +1088,7 @@ int elab_request(int fd_c, message_t message){
             //costruisco il path del file
             char *path = (char *)malloc(pathlen * sizeof(char));
 
-            strncat(path, val.DirName, strlen(val.DirName));
+            strncpy(path, val.DirName, strlen(val.DirName));
             strcat(path, "/");
 
             char *slash  = strrchr(message.data.buf, '/'); //controllo se esiste uno slash in message.data.buf
@@ -1075,9 +1106,11 @@ int elab_request(int fd_c, message_t message){
 
             //apro il file
             FILE *file_to_deliver = fopen(path, "w");
+            free(path);
 
             if (!file_to_deliver){ //se fallisce l'apertura
                 printf("errore nell'open del file in %s\n", path);
+
                 setHeader(&reply_msg.hdr, OP_FAIL, "");
                 sendHeader(fd_c, &reply_msg.hdr);
 
@@ -1196,7 +1229,7 @@ int elab_request(int fd_c, message_t message){
             //costruisco il path del file
             char *path = (char *)malloc(pathlen * sizeof(char));
 
-            strncat(path, val.DirName, strlen(val.DirName));
+            strncpy(path, val.DirName, strlen(val.DirName));
             strcat(path, "/");
 
             char *slash  = strrchr(message.data.buf, '/'); //controllo se esiste uno slash in message.data.buf
@@ -1212,6 +1245,7 @@ int elab_request(int fd_c, message_t message){
 
             //apro il file
             FILE *file_to_deliver = fopen(path, "r");
+            free(path);
 
             if (!file_to_deliver){ //se fallisce l'apertura
                 printf("errore nell'open del file in %s\n", path);
