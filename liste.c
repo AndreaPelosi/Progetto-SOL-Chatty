@@ -8,6 +8,8 @@
 list_t *createList(){
 
     list_t *hd = (list_t *)malloc(sizeof(list_t));
+    memset(hd, 0, sizeof(list_t));
+
     hd->numb_elems = 0;
     hd->list = NULL;
 
@@ -19,7 +21,11 @@ list_t *createList(){
 list_t *insertListHead(list_t *L, const char *str, int fd){
 
     node_t *curr = (node_t *)malloc(sizeof(node_t));
+    memset(curr, 0, sizeof(node_t));
+
     curr->word = (char *)malloc((MAX_NAME_LENGTH + 1) * sizeof(char));
+    memset(curr->word, 0, (MAX_NAME_LENGTH + 1) * sizeof(char));
+
     int len = strlen(str);
 
     strncpy(curr->word, str, len);
@@ -63,9 +69,12 @@ node_t *listFind(list_t *L, const char *str){
 
     for (curr = L->list; curr != NULL; curr = curr->next) {
 
-        cpy = (char *)malloc(len * sizeof(char));
+        cpy = (char *)malloc((len + 1) * sizeof(char));
+        memset(cpy, 0, (len + 1) * sizeof(char));
+
         strncpy(cpy, curr->word, len);
-        if (0 == strcmp(cpy, str)){
+        if (0 == strcmp(cpy, str)){ //si controlla se str e' un el. della lista
+            free(cpy);
             return curr;
         }
         free(cpy);
@@ -84,6 +93,11 @@ list_t *deleteNameFromList(list_t *L, const char *str){
     if (strcmp(curr->word, str) == 0){
         L->numb_elems--;
         L->list = curr->next;
+
+        free(curr->word);
+        free(curr);
+        curr = NULL;
+
         return L;
     }
 
@@ -117,6 +131,11 @@ list_t *deleteFdFromList(list_t *L, int fd){
     if (curr->fd == fd){
         L->numb_elems--;
         L->list = curr->next;
+
+        free(curr->word);
+        free(curr);
+        curr = NULL;
+
         return L;
     }
 
@@ -158,10 +177,31 @@ void destroyList(list_t *L){
 }
 
 
+char *toBuf(list_t *L) {
+    char *buffer = (char *)malloc((L->numb_elems * (MAX_NAME_LENGTH + 1) + 1) * sizeof(char));
+    memset(buffer, 0, (L->numb_elems * (MAX_NAME_LENGTH + 1) + 1) * sizeof(char));
+
+    char *aux = buffer;
+    node_t *curr = L->list;
+
+	for (size_t i = 0; i < L->numb_elems; i++) {
+			strncpy(aux, curr->word, MAX_NAME_LENGTH + 1);
+			aux += MAX_NAME_LENGTH + 1;
+            curr = curr->next;
+	}
+    buffer[L->numb_elems * (MAX_NAME_LENGTH + 1)] = '\0'; //aggiungo il terminatore alla stringa
+
+    return buffer;
+}
+
+
+#if 0
 
 char *toBuf(list_t *L) {
     char *buffer = calloc((L->numb_elems * (MAX_NAME_LENGTH + 1)), sizeof(char));
-	char *aux = buffer;
+    memset(buffer, 0, L->numb_elems * (MAX_NAME_LENGTH + 1) * sizeof(char));
+
+    char *aux = buffer;
     node_t *curr = L->list;
 
 	for (size_t i = 0; i < L->numb_elems; i++) {
@@ -174,8 +214,6 @@ char *toBuf(list_t *L) {
 }
 
 
-
-#if 0
 
 char *toBuf(list_t *L){
 

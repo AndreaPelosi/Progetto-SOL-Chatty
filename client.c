@@ -214,7 +214,7 @@ static int execute_requestreply(int connfd, operation_t *o) {
 	    return -msg.hdr.op; // codice di errore ritornato
 	} break;
 	default: {
-	    fprintf(stderr, "ERRORE: risposta non valida\n");
+	    fprintf(stderr, "%s: ERRORE: risposta non valida (aveva richiesto operazione %d, come risposta gli e' arrivato %d)\n", sname, op, msg.hdr.op);
 	    return -1;
 	}
 	}
@@ -231,7 +231,7 @@ static int execute_requestreply(int connfd, operation_t *o) {
 	}
 	int nusers = msg.data.hdr.len / (MAX_NAME_LENGTH+1);
 	assert(nusers > 0);
-	printf("Lista utenti online:\n");
+	printf("Lista utenti online stampata da %s:\n", sname);
 	for(int i=0,p=0;i<nusers; ++i, p+=(MAX_NAME_LENGTH+1)) {
 	    printf(" %s\n", &msg.data.buf[p]);
 	}
@@ -570,7 +570,7 @@ int main(int argc, char *argv[]) {
 	    r = execute_requestreply(connfd, &ops[i]);
 	else
 	    r = execute_receive(connfd, &ops[i]);
-	if (r == 0)  printf("Operazione %d eseguita con successo!\n", i);
+	if (r == 0)  printf("%s: Operazione %d eseguita con successo!\n", nick, i);
 	else break;  // non appena una operazione fallisce esco
 
 	// tra una operazione e l'altra devo aspettare msleep millisecondi

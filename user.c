@@ -30,6 +30,8 @@ int user_data_init(user_data_t *usrdt, char *username, int fd, int MaxMsgSize, i
 
     int len = strlen(username);
     usrdt->username = (char *)malloc((len+1) * sizeof(char));
+    memset(usrdt->username, 0, (len+1) * sizeof(char));
+
     if (!usrdt->username) return -1;
 
     strncpy(usrdt->username, username, strlen(username)+1);
@@ -39,14 +41,18 @@ int user_data_init(user_data_t *usrdt, char *username, int fd, int MaxMsgSize, i
 
 
     usrdt->hist = (history_t *)malloc(MaxHistMsgs * sizeof(history_t));
+    memset(usrdt->hist, 0, MaxHistMsgs * sizeof(history_t));
+
     if (!(usrdt->hist)) return -1;
 
 
     for (size_t i = 0; i < MaxHistMsgs; i++) {
 
         ((usrdt->hist)[i]).msg_history = (message_t *)malloc(sizeof(message_t));
+        memset(((usrdt->hist)[i]).msg_history, 0, sizeof(message_t));
 
         ((usrdt->hist)[i]).msg_history->data.buf = (char *)malloc(MaxMsgSize * sizeof(char));
+        memset(((usrdt->hist)[i]).msg_history->data.buf, 0, MaxMsgSize * sizeof(char));
 
         ((usrdt->hist)[i]).read_bit = 1; //permette agli elementi di essere sovrascritti
     }
@@ -77,6 +83,7 @@ int add_to_history(user_data_t *usrdt, message_t *msg_to_add, int read, int alre
 
 
     message_t *msg = (message_t *)malloc(sizeof(message_t));
+    memset(msg, 0, sizeof(message_t));
 
     msg->hdr.op = msg_to_add->hdr.op;
 
@@ -85,6 +92,7 @@ int add_to_history(user_data_t *usrdt, message_t *msg_to_add, int read, int alre
     msg->data.hdr.len = msg_to_add->data.hdr.len;
 
     msg->data.buf = (char *)malloc(msg_to_add->data.hdr.len * sizeof(char));
+    memset(msg->data.buf, 0, msg_to_add->data.hdr.len * sizeof(char));
 
     msg->data.buf = strncpy(msg->data.buf, msg_to_add->data.buf, msg_to_add->data.hdr.len);
 
@@ -112,6 +120,7 @@ int add_to_history_all(icl_hash_t *hashtable, char *user, message_t *msg_to_add,
     user_data_t *dp;
 
     message_t *msg = (message_t *)malloc(sizeof(message_t));
+    memset(msg, 0, sizeof(message_t));
 
     setHeader(&msg->hdr, TXT_MESSAGE, user);
 
@@ -120,6 +129,8 @@ int add_to_history_all(icl_hash_t *hashtable, char *user, message_t *msg_to_add,
     msg->data.hdr.len = msg_to_add->data.hdr.len;
 
     msg->data.buf = (char *)malloc(msg_to_add->data.hdr.len * sizeof(char));
+    memset(msg->data.buf, 0, msg_to_add->data.hdr.len * sizeof(char));
+
     msg->data.buf = strncpy(msg->data.buf, msg_to_add->data.buf, msg_to_add->data.hdr.len);
 
 
@@ -139,26 +150,36 @@ int add_to_history_all(icl_hash_t *hashtable, char *user, message_t *msg_to_add,
 
             (*noffline)++;
 
+            add_to_history(dp, msg, 0, 1);
             //aggiorno la history del destinatario e marco il messaggio come non letto
-            if (-1 == add_to_history(dp, msg, 0, 1)){
+            /*if (-1 == add_to_history(dp, msg, 0, 1)){
                 THREAD(pthread_mutex_unlock(&dp->mtex), "unlock in add_to_history_all");
+
+                free(msg->data.buf);
+                free(msg);
                 return 1; //history del destinatario piena, il fd del mittente verra' rimesso in coda
-            }
+            }*/
 
 
         } else { //il destinatario e' online
             printf("il destinatario e' online, messaggio inviato con successo\n");
 
             (*nonline)++;
-
+            add_to_history(dp, msg, 1, 1);
             //aggiorno la history del destinatario e marco il messaggio come letto
-            if (-1 == add_to_history(dp, msg, 1, 1)){
+            /*if (-1 == add_to_history(dp, msg, 1, 1)){
                 THREAD(pthread_mutex_unlock(&dp->mtex), "unlock in add_to_history_all");
+
+                free(msg->data.buf);
+                free(msg);
                 return 1; //history del destinatario piena, il fd del mittente verra' rimesso in coda
-            }
+            }*/
         }
         THREAD(pthread_mutex_unlock(&dp->mtex), "unlock in add_to_history_all");
     }
+
+    free(msg->data.buf);
+    free(msg);
     return 0;
 }
 
@@ -184,4 +205,19 @@ void update_user_fd(user_data_t *usrdt, int new_fd) {
     THREAD(pthread_mutex_lock(&usrdt->mtex), "lock in update_user_fd");
     usrdt->fd = new_fd;
     THREAD(pthread_mutex_unlock(&usrdt->mtex), "unlock in update_user_fd");
+}
+
+
+void free_hist(user_data_t *usrdt) {
+
+    THREAD(pthread_mutex_lock(&usrdt->mtex), "lock in free_hist");
+
+    for (size_t i = 0; i < usrdt->size; i++) {
+        free(((usrdt->hist)[i]).msg_history->data.buf);
+        free(((usrdt->hist)[i]).msg_history);
+    }
+
+    free(usrdt->hist);
+
+    THREAD(pthread_mutex_unlock(&usrdt->mtex), "unlock in free_hist");
 }

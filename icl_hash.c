@@ -29,6 +29,8 @@
 
 #include <macrothread.h>
 #include <pthread.h>
+#include <string.h>
+#include <user.h>
 
 #define BITS_IN_int     ( sizeof(int) * CHAR_BIT )
 #define THREE_QUARTERS  ((int) ((BITS_IN_int * 3) / 4))
@@ -75,16 +77,16 @@ static int string_compare(void* a, void* b)
  * @param[in] hash_function -- pointer to the hashing function to be used
  * @param[in] hash_key_compare -- pointer to the hash key comparison function to be used
  * @param[in] divisore_lock -- divisore di nbuckets per calcolare la dimensione dell'array di mutexes
+ * @param[in] dim_array_mtex -- puntatore a intero che prendera' la dimensione dell'array di mutexes
  *
  * @returns pointer to new hash table.
  */
 
 icl_hash_t *
-icl_hash_create( int nbuckets, unsigned int (*hash_function)(void*), int (*hash_key_compare)(void*, void*), int divisore_lock )
+icl_hash_create( int nbuckets, unsigned int (*hash_function)(void*), int (*hash_key_compare)(void*, void*), int divisore_lock,int *dim_array_mtex)
 {
     icl_hash_t *ht;
     int i;
-    int dim_array_mtex;
 
     ht = (icl_hash_t*) malloc(sizeof(icl_hash_t));
     if(!ht) return NULL;
@@ -102,10 +104,10 @@ icl_hash_create( int nbuckets, unsigned int (*hash_function)(void*), int (*hash_
 
     ht->divisore_lock = divisore_lock;
 
-    dim_array_mtex = (int)(nbuckets/divisore_lock);
-    ht->mtex_hash = (pthread_mutex_t*) malloc(dim_array_mtex * sizeof(pthread_mutex_t));
+    *dim_array_mtex = (int)(nbuckets/divisore_lock);
+    ht->mtex_hash = (pthread_mutex_t*) malloc((*dim_array_mtex) * sizeof(pthread_mutex_t));
 
-    for (size_t i = 0; i < dim_array_mtex; i++) {
+    for (size_t i = 0; i < *dim_array_mtex; i++) {
         pthread_mutex_init(&((ht->mtex_hash)[i]), NULL);
     }
     return ht;
@@ -177,7 +179,10 @@ icl_hash_insert(icl_hash_t *ht, void* key, void *data)
     curr = (icl_entry_t*)malloc(sizeof(icl_entry_t));
     if(!curr) return NULL;
 
-    curr->key = key;
+    curr->key = (char *)malloc( (strlen(key)+1) * sizeof(char));
+    memset(curr->key, 0, (strlen(key)+1) *sizeof(char));
+    strncpy(curr->key, key, strlen(key)+1);
+    //curr->key = strdup((const char *)key);
     curr->data = data;
     curr->next = ht->buckets[hash_val]; /* add at start */
 
@@ -221,6 +226,7 @@ int icl_hash_delete(icl_hash_t *ht, void* key, void (*free_key)(void*), void (*f
             } else {
                 prev->next = curr->next;
             }
+            free(curr->key);
             if (*free_key && curr->key) (*free_key)(curr->key);
             if (*free_data && curr->data) (*free_data)(curr->data);
             ht->nentries--;
@@ -262,7 +268,9 @@ icl_hash_destroy(icl_hash_t *ht, void (*free_key)(void*), void (*free_data)(void
         bucket = ht->buckets[i];
         for (curr=bucket; curr!=NULL; ) {
             next=curr->next;
+            free(curr->key);
             if (*free_key && curr->key) (*free_key)(curr->key);
+            free_hist(curr->data);
             if (*free_data && curr->data) (*free_data)(curr->data);
             free(curr);
             curr=next;

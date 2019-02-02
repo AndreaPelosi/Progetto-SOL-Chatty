@@ -206,9 +206,10 @@ int main(int argc, char *argv[]) {
     strncpy(sa.sun_path, val.UnixPath, UNIX_PATH_MAX);
     sa.sun_family = AF_UNIX;
 
-
+    int dim_array_mtex; //size dell'array di mutex per gestire la concorrenza in hashtable
     //creazione tabella hash
-    hashtable = icl_hash_create(HASHTABLE_LENGTH, NULL, NULL, val.MaxConnections);
+    hashtable = icl_hash_create(HASHTABLE_LENGTH, NULL, NULL, val.MaxConnections, &dim_array_mtex);
+
 
     //creazione lista degli utenti connessi
     user_list = createList();
@@ -229,12 +230,10 @@ int main(int argc, char *argv[]) {
         exit(EXIT_FAILURE);
     }
 
-    if (fcntl(comm_pipe[0], F_SETFL, O_NONBLOCK) < 0) {
+    if (fcntl(comm_pipe[0], F_SETFL, O_NONBLOCK) < 0) { //scrivere a che serve
         perror("fcntl error");
         exit(EXIT_FAILURE);
     }
-
-    //printf("ciao\n");
 
     for (size_t i = 0; i < val.ThreadsInPool; i++) {
         THREAD(pthread_create(&thread_pool[i], NULL, &run_pool_element, NULL), "creando thread_pool");
@@ -246,16 +245,36 @@ int main(int argc, char *argv[]) {
 
     THREAD(pthread_create(&tid_listener, NULL, &run_listener, (void*)&sa), "creando tid_listener");
 
+
     THREAD(pthread_join(tid_listener, NULL), "joinando tid_listener");
 
     for (size_t c = 0; c < val.ThreadsInPool; c++) {
         THREAD(pthread_join(thread_pool[c], NULL), "joinando thread_pool");
     }
-    printf("successo!\n");
 
 
-    //fare tutta la pulizia necessaria: chiudere i file descriptor, chiudere fd_skt, distruggere coda, distruggere tutto, fare tutte le free
-    //distruggere tabella hash
+    //libero la memoria
+
+    free(thread_pool);
+
+    destroyList(user_list); //distruggo la lista degli utenti online
+
+    icl_hash_destroy(hashtable, NULL, NULL, dim_array_mtex); //distruggo la tab hash degli utenti registrati
+
+    ec_meno1(close(comm_pipe[0]), "close in main"); //chiudo la pipe sia in lett. che in scritt.
+    ec_meno1(close(comm_pipe[1]), "close in main");
+
+    free(val.UnixPath);
+    free(val.DirName);
+    free(val.StatFileName);
+
+    val.UnixPath = NULL;
+    val.DirName = NULL;
+    val.StatFileName = NULL;
+
+    printf("Chatty terminato con successo!\n");
+    fflush(stdout);
+
     return 0;
 }
 
@@ -300,13 +319,14 @@ void termination_handler(int sig) {
         int signum;
         char *msg;
     } sigmsg[] = {
-        { SIGTERM, "segnale di terminazione catturato"},
-        { SIGINT, "segnale di interruzione catturato"},
-        { SIGQUIT, "segnale di quit catturato"},
+        { SIGTERM, "segnale di terminazione catturato\n"},
+        { SIGINT, "segnale di interruzione catturato\n"},
+        { SIGQUIT, "segnale di quit catturato\n"},
         { 0, NULL}
     };
 
     sigstop = 1; //il programma deve terminare
+    pthread_cond_broadcast(&cond_pipe);
 
     for (int i = 0; sigmsg[i].signum > 0; i++) {
         if (sigmsg[i].signum == sig) {
@@ -315,12 +335,11 @@ void termination_handler(int sig) {
             break;
         }
     }
-    _exit(EXIT_FAILURE);
 }
 
 void stats_handler(int sig) {
 
-    sigusr = 1;
+    sigusr = 1; //il programma deve stampare in un file le statistiche
 }
 
 int update_stats(struct statistics *chattyStats, int nu, int no, int nd, int nnd, int nfd, int nfnd, int ne){
@@ -359,41 +378,36 @@ void *run_listener(void * arg){
         fd_c, //socket di I/O con un client
         fd, //indice per verificare i risultati della select
         fd_num = 0; //massimo fd attivo
-    //char *buf = (char *)malloc(100*sizeof(char)); //buffer di prova
-    //int nread; //numero di caratteri letti
-        fd_set rdset; //insieme dei fd attesi per la lettura
-//        wrset; //insieme dei fd su cui scrivere
+
+    fd_set rdset; //insieme dei fd attesi per la lettura
 
     //apro la connessione su fd_skt
     fd_skt = socket(AF_UNIX, SOCK_STREAM, 0);
 
     if (-1 == fd_skt){
         perror("socket thread_listener server");
-        return(void *)-1; //controllare se va bene
+        return(void *)-1;
     }
     if (-1 == bind(fd_skt, (struct sockaddr *)arg, sizeof(struct sockaddr_un)) ){
         perror("bind socket per le connessioni coi client");
-        return (void *)-1;
+        return(void *)-1;
     }
     if (-1 == listen(fd_skt, SOMAXCONN) ){
         perror("listen socket per le connessioni coi client");
-        return (void *)-1;
+        return(void *)-1;
     }
 
     struct timeval timeout = {0, 10000};
 
-//    printf("fd_num prima : %d\n", fd_num);
     if (fd_skt > fd_num) fd_num = fd_skt;
     FD_ZERO(&set);
     FD_SET(fd_skt,&set);
-//    printf("fd_num dopo : %d\n", fd_num);
-//    printf("fd_skt : %d\n", fd_skt);
+
     while (!sigstop) {
 
         THREAD(pthread_mutex_lock(&mtex_set), "lock in run_listener");
         rdset = set;
         THREAD(pthread_mutex_unlock(&mtex_set), "unlock in run_listener");
-//        printf("sono arrivato qui1\n" );
 
         if (sigusr) {
             FILE *statfile = fopen(val.StatFileName, "a+");
@@ -411,12 +425,10 @@ void *run_listener(void * arg){
         int sel = select((fd_num + 1), &rdset, NULL, NULL, &timeout);
         if (-1 ==  sel){
             perror("errore select thread listener");
-            return (void *)-1;
+        //    return 1;
         } else if (0 != sel){
-//            printf("sono arrivato qui2\n" );
 
             for (fd = 0; fd <= fd_num; fd++) {
-                //printf("controllo il seguente fd: %d\n", fd);
                 if (FD_ISSET(fd, &rdset)) {
 
                     if (fd == fd_skt) { //nuova connessione con un client
@@ -441,7 +453,6 @@ void *run_listener(void * arg){
                             FD_SET(fd_c, &set);
                             THREAD(pthread_mutex_unlock(&mtex_set), "unlock in run_listener");
                             //il client non e' ancora online
-                            //printf("nuova connessione con un client, il fd e': %d\n", fd_c);
                             if (fd_c > fd_num) fd_num = fd_c;
                         }
                     } else { //passo il fd ad un thread per elaborare le richieste
@@ -450,43 +461,35 @@ void *run_listener(void * arg){
                         FD_CLR(fd,&set);
                         THREAD(pthread_mutex_unlock(&mtex_set), "unlock in run_listener");
 
-                        //pusho il fd nella coda
-                        //printf("sto facendo la push del file descriptor %d\n", fd);
-
                         if (-1 == write(comm_pipe[1], &fd, sizeof(int))) {
-                            perror("write nel listener");
+                            perror("ERROREEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEwrite nel listener");
                             continue;
                         }
 
                         THREAD(pthread_cond_signal(&cond_pipe),"signal in run_listener");
-
-
-                        //pushQ(forwardQ, fd); //aggiungere ec_meno1?
-//                        printf("al thread listener e' arrivato il seguente fd : %d\n", fd);
-
-
-                        #if 0
-                        nread = read(fd, buf, 100);
-        //                ec_meno1(nread, "server read error");
-                        if (0 == nread){ //lettura finita
-                            FD_CLR(fd, &set); //controllare se basta questo
-                            close(fd);
-                        } else {
-                            printf("server got: %s\n", buf);
-        //                    ec_meno1(write(fd, "lettura avvenuta con successo", 30), "server write error");
-                        }
-                        #endif
-
-
                     }
                 }
             }
         } else if (0 == sel){
-        //    printf("timeout expired\n");
             timeout.tv_sec = 0;
             timeout.tv_usec = 10000;
         }
     }
+
+
+    for (size_t i = 0; i <= fd_num; i++) {
+        //chiudo i fd che potrebbero essere rimasti aperti sia in lettura che in scrittura
+        if (-1 == shutdown(i, SHUT_RDWR)) {
+            if (errno != ENOTSOCK) { //lasciare questo?
+                perror("shutdown in thread_listener");
+            }
+        }
+    }
+
+    if (-1 == close(fd_skt)) {
+        perror("close in thread_listener");
+    }
+
     pthread_exit(NULL);
 }
 
@@ -504,43 +507,48 @@ void* run_pool_element(void *arg){
         THREAD(pthread_mutex_lock(&mtex_pipe), "lock in run_pool_element");
 
         while (-1 == res) {
-
             res = read(comm_pipe[0], &fd, sizeof(int));
 
             if (-1 == res) {
 
                 if (errno == EAGAIN) {
                     THREAD(pthread_cond_wait(&cond_pipe, &mtex_pipe), "wait in run_pool_element");
+
+                    if (sigstop) { //se e' stato inviato un segnale e il processo deve terminare
+                        THREAD(pthread_mutex_unlock(&mtex_pipe), "unlock in run_pool_element");
+                        pthread_exit(NULL);
+                    }
                 } else {
-                    perror("read in un worker; fallimento nella retrieve di un fd");
+                    perror("ERROREEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEE read in un worker; fallimento nella retrieve di un fd");
                     pthread_exit(NULL);
                 }
-
             }
-
-
         }
 
         THREAD(pthread_mutex_unlock(&mtex_pipe), "unlock in run_pool_element");
 
-        //printf("il file descriptor e' %d\n", fd);
-
-        //printf("un thread e' arrivato qui, il thread %lu\n", pthread_self());
 
         int r = readHeader(fd, &msg.hdr);
 
         if (r < 0) {
 
-            printf("errore lettura dell'header\n");
-            perror("leggendo header");
+            printf("fd %d errore lettura dell'header\n", fd);
+            perror("ERROREEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEE leggendo header");
         //    free(msg.data.buf);
-
+            int check_stats = update_stats(&chattyStats, 0, -1, 0, 0, 0, 0, 0);//diminuisco il numero degli utenti connessi
         } else if (r > 0){
 
             int ans = elab_request(fd, msg);
             //free(msg.data.buf);
 
-            if (ans < 0){
+            if (ans < -2) { //deregistrazione e disconnessione implicita dell'utente
+
+                printf("una deregistrazione e' avvenuta con successo\n");
+            } else if (-2 == ans) { //utente ha provato a fare operazioni senza essere registrato/connesso
+
+                printf("richiesta illegale, la statistica degli utenti connessi non deve essere aggiornate\n");
+            } else if (-1 == ans){ //operazione richiesta dall'utente fallita
+
                 printf("errore nell'elaborazione del messaggio, %d non verra' aggiunto nuovamente alla coda\n", fd);
 
                 if (user_list->numb_elems > 0) {
@@ -573,12 +581,12 @@ void* run_pool_element(void *arg){
             //l'utente viene disconnesso (e quindi eliminato dalla lista dei connessi)
             user_list = deleteFdFromList(user_list, fd);
 
-            int check_stats = update_stats(&chattyStats, 0, -1, 0, 0, 0, 0, 0);//diminuisco il numero degli utenti connessi
+            if (0 < chattyStats.nonline) {
+                update_stats(&chattyStats, 0, -1, 0, 0, 0, 0, 0);//diminuisco il numero degli utenti connessi
+            }
 
             printf("numero utenti connessi: %lu  \n", chattyStats.nonline);
 
-            if (-1 == check_stats){
-            }
 
             printf("lettura su %d terminata, il fd non verra' aggiunto nuovamente alla coda\n", fd);
         }
@@ -594,12 +602,15 @@ int elab_request(int fd_c, message_t message){
     message_t reply_msg;
 
     char *sender = strdup(message.hdr.sender);
+    //char *sender = message.hdr.sender;
+
+    printf("l'utente %s sta lavorando sul fd %d\n", sender, fd_c);
 
     //se la lettura dei dati del messaggio fallisce
     if(readData(fd_c, &message.data) <= 0){
         printf("errore: fallimento lettura dati\n");
         free(message.data.buf);
-
+        free(sender);
         update_stats(&chattyStats, 0, 0, 0, 0, 0, 0, 1); //aumento il numero degli errori
 
         return -1;
@@ -618,11 +629,15 @@ int elab_request(int fd_c, message_t message){
             printf("%s: richiesta di registrazione\n", sender);
 
             user_data_t *usrdt = (user_data_t *)malloc(sizeof(user_data_t));
+            memset(usrdt, 0, sizeof(user_data_t));
 
             //errore nell'inizializzazione della struttura che contiene i dati dell'utente
             if (-1 == user_data_init(usrdt, sender, fd_c, val.MaxMsgSize, val.MaxFileSize, val.MaxHistMsgs)){
                 //inviare un messaggio al client dove si dice "registrazione fallita, riprovare" ?
-                return -1;
+                free(message.data.buf);
+                free(sender);
+
+                return -2;
                 update_stats(&chattyStats, 0, 0, 0, 0, 0, 0, 1); //aumento il numero degli errori
             }
 
@@ -638,8 +653,10 @@ int elab_request(int fd_c, message_t message){
                 sendHeader(fd_c, &reply_msg.hdr);
 
                 update_stats(&chattyStats, 0, 0, 0, 0, 0, 0, 1); //aumento il numero degli errori
+                free(message.data.buf);
+                free(sender);
 
-                return -1;
+                return -2;
             }
 
             THREAD(pthread_mutex_unlock(&mtex_stats), "unlock in elab_request");
@@ -653,8 +670,10 @@ int elab_request(int fd_c, message_t message){
                 sendHeader(fd_c, &reply_msg.hdr);
 
                 update_stats(&chattyStats, 0, 0, 0, 0, 0, 0, 1); //aumento il numero degli errori
+                free(message.data.buf);
+                free(sender);
 
-                return -1;
+                return -2;
             }
 
             printf("sto inserendo il nick: %s\n", sender);
@@ -667,8 +686,10 @@ int elab_request(int fd_c, message_t message){
                 sendHeader(fd_c, &reply_msg.hdr);
 
                 update_stats(&chattyStats, 0, 0, 0, 0, 0, 0, 1); //aumento il numero degli errori
+                free(message.data.buf);
+                free(sender);
 
-                return -1;
+                return -2;
             }
 
             //icl_hash_insert ha avuto successo
@@ -684,14 +705,25 @@ int elab_request(int fd_c, message_t message){
             setHeader(&reply_msg.hdr, OP_OK, "");
 
             if (sendHeader(fd_c, &reply_msg.hdr) <= 0) {
-                return -1;
+                free(message.data.buf);
+                free(buffer);
+                free(sender);
+
+                return -2;
             }
 
             setData(&reply_msg.data, "", buffer, length);
 
             if (sendData(fd_c, &reply_msg.data) < 0) {
-                return -1;
+                free(message.data.buf);
+                free(buffer);
+                free(sender);
+
+                return -2;
             }
+            free(message.data.buf);
+            free(buffer);
+            free(sender);
 
         } break;
 
@@ -715,8 +747,10 @@ int elab_request(int fd_c, message_t message){
                 sendHeader(fd_c, &reply_msg.hdr);
 
                 update_stats(&chattyStats, 0, 0, 0, 0, 0, 0, 1); //aumento il numero degli errori
+                free(message.data.buf);
+                free(sender);
 
-                return -1;
+                return -2;
             }
 
 
@@ -732,8 +766,10 @@ int elab_request(int fd_c, message_t message){
                 sendHeader(fd_c, &reply_msg.hdr);
 
                 update_stats(&chattyStats, 0, 0, 0, 0, 0, 0, 1); //aumento il numero degli errori
+                free(message.data.buf);
+                free(sender);
 
-                return -1;
+                return -2;
             }
 
             THREAD(pthread_mutex_unlock(&mtex_stats), "unlock in elab_request");
@@ -758,14 +794,26 @@ int elab_request(int fd_c, message_t message){
             setHeader(&reply_msg.hdr, OP_OK, "");
 
             if (sendHeader(fd_c, &reply_msg.hdr) <= 0) {
+                free(message.data.buf);
+                free(buffer);
+                free(sender);
+
                 return -1;
             }
 
             setData(&reply_msg.data, "", buffer, length);
 
             if (sendData(fd_c, &reply_msg.data) < 0) {
+                free(message.data.buf);
+                free(sender);
+                free(buffer);
+
                 return -1;
             }
+            free(buffer);
+            free(message.data.buf);
+            printf("%s: connessione riuscita, egli verra' ascoltato di nuovo\n", sender);
+            free(sender);
 
         } break;
 
@@ -786,8 +834,10 @@ int elab_request(int fd_c, message_t message){
                 sendHeader(fd_c, &reply_msg.hdr);
 
                 update_stats(&chattyStats, 0, 0, 0, 0, 0, 0, 1); //aumento il numero degli errori
+                free(message.data.buf);
+                free(sender);
 
-                return -1;
+                return -2;
             }
 
 
@@ -800,8 +850,10 @@ int elab_request(int fd_c, message_t message){
                 sendHeader(fd_c, &reply_msg.hdr);
 
                 update_stats(&chattyStats, 0, 0, 0, 0, 0, 0, 1); //aumento il numero degli errori
+                free(message.data.buf);
+                free(sender);
 
-                return -1;
+                return -2;
             }
 
 
@@ -820,6 +872,8 @@ int elab_request(int fd_c, message_t message){
                 sendHeader(fd_c, &reply_msg.hdr);
 
                 update_stats(&chattyStats, 0, 0, 0, 0, 0, 0, 1); //aumento il numero degli errori
+                free(message.data.buf);
+                free(sender);
 
                 return -1;
             }
@@ -834,12 +888,16 @@ int elab_request(int fd_c, message_t message){
                 sendHeader(fd_c, &reply_msg.hdr);
 
                 update_stats(&chattyStats, 0, 0, 0, 0, 0, 0, 1); //aumento il numero degli errori
+                free(message.data.buf);
+                free(sender);
 
                 return -1;
             }
 
             //operazione ha avuto successo
 
+            //setta l'header del messaggio di risposta dal server per il mittente di POSTTXT_OP
+            setHeader(&reply_msg.hdr, OP_OK, "");
 
             message_t msg_to_deliver;
 
@@ -856,10 +914,17 @@ int elab_request(int fd_c, message_t message){
 
                 //aggiorno la history del destinatario e marco il messaggio come non letto
                 if (-1 == add_to_history(dest, &msg_to_deliver, 0, 0)){
-                    setHeader(&reply_msg.hdr, OP_FAIL, "");
+                    //setHeader(&reply_msg.hdr, OP_FAIL, "");
 
-                    if (sendHeader(fd_c, &reply_msg.hdr) <= 0)
+                    if (sendHeader(fd_c, &reply_msg.hdr) <= 0) {
+                        free(message.data.buf);
+                                                printf("%s: richiesta di post messaggio fallita errore lettura header\n", sender);
+                        free(sender);
                         return -1;
+                    }
+                    free(message.data.buf);
+                                                printf("%s: richiesta di post messaggio fallita history piena\n", sender);
+                    free(sender);
 
                     return 1; //history del destinatario piena, il fd del mittente verra' rimesso in coda
                 }
@@ -873,21 +938,33 @@ int elab_request(int fd_c, message_t message){
 
                 //aggiorno la history del destinatario e marco il messaggio come letto
                 if (-1 == add_to_history(dest, &msg_to_deliver, 1, 0)){
-                    setHeader(&reply_msg.hdr, OP_FAIL, "");
+                    //setHeader(&reply_msg.hdr, OP_FAIL, "");
 
-                    if (sendHeader(fd_c, &reply_msg.hdr) <= 0)
+                    if (sendHeader(fd_c, &reply_msg.hdr) <= 0) {
+                        free(message.data.buf);
+                        free(sender);
+                                                printf("%s: richiesta di post messaggio fallita errore header\n", sender);
                         return -1;
+                    }
+                    free(message.data.buf);
+                                                printf("%s: richiesta di post messaggio fallita history piena\n", sender);
+                    free(sender);
 
                     return 1; //history del destinatario piena, il fd del mittente verra' rimesso in coda
                 }
 
             }
 
-            //setta l'header del messaggio di risposta dal server per il mittente di POSTTXT_OP
-            setHeader(&reply_msg.hdr, OP_OK, "");
 
-            if (sendHeader(fd_c, &reply_msg.hdr) <= 0)
+            if (sendHeader(fd_c, &reply_msg.hdr) <= 0) {
+                free(message.data.buf);
+                                            printf("%s: richiesta di post messaggio fallita errore header\n", sender);
+                free(sender);
                 return -1;
+            }
+            free(message.data.buf);
+            printf("%s: post messaggio riuscita, egli verra' ascoltato di nuovo\n", sender);
+            free(sender);
 
         } break;
 
@@ -909,8 +986,10 @@ int elab_request(int fd_c, message_t message){
                 sendHeader(fd_c, &reply_msg.hdr);
 
                 update_stats(&chattyStats, 0, 0, 0, 0, 0, 0, 1); //aumento il numero degli errori
+                free(message.data.buf);
+                free(sender);
 
-                return -1;
+                return -2;
             }
 
 
@@ -923,8 +1002,10 @@ int elab_request(int fd_c, message_t message){
                 sendHeader(fd_c, &reply_msg.hdr);
 
                 update_stats(&chattyStats, 0, 0, 0, 0, 0, 0, 1); //aumento il numero degli errori
+                free(message.data.buf);
+                free(sender);
 
-                return -1;
+                return -2;
             }
 
             int buf_len = message.data.hdr.len;
@@ -938,6 +1019,8 @@ int elab_request(int fd_c, message_t message){
                 sendHeader(fd_c, &reply_msg.hdr);
 
                 update_stats(&chattyStats, 0, 0, 0, 0, 0, 0, 1); //aumento il numero degli errori
+                free(message.data.buf);
+                free(sender);
 
                 return -1;
             }
@@ -953,12 +1036,17 @@ int elab_request(int fd_c, message_t message){
             setHeader(&msg_to_deliver.hdr, TXT_MESSAGE, sender);
             setData(&msg_to_deliver.data, "", message.data.buf, message.data.hdr.len);
 
-            int nonline, noffline = 0; //numero di utenti online e offline al momento dell'invio a tutti del messaggio
+            int nonline = 0;
+            int noffline = 0; //numero di utenti online e offline al momento dell'invio a tutti del messaggio
 
             //invio il messaggio a tutti gli utenti regstrati e lo aggiungo nella history di ognuno
-            if (1 == add_to_history_all(hashtable, sender, &msg_to_deliver, &nonline, &noffline)) {
-                return 1;
-            }
+        //    if (1 == add_to_history_all(hashtable, sender, &msg_to_deliver, &nonline, &noffline)) {
+        //        free(message.data.buf);
+        //        free(sender);
+//
+//                return 1;
+//            }
+            add_to_history_all(hashtable, sender, &msg_to_deliver, &nonline, &noffline);
 
             //aumento sia il numero dei messaggi consegnati che quelli non consegnati
             //in accordo all'aggiornamento ai contatori nonline e noffline fatto da add_to_history_all
@@ -966,8 +1054,16 @@ int elab_request(int fd_c, message_t message){
 
             printf("i messaggi consegnati con successo sono %d, quelli non consegnati sono %d\n", nonline, noffline);
 
-            if (sendHeader(fd_c, &reply_msg.hdr) <= 0)
+            if (sendHeader(fd_c, &reply_msg.hdr) <= 0) {
+                free(message.data.buf);
+                                        printf("%s: richiesta di post messaggio fallita errore header\n", sender);
+                free(sender);
+
                 return -1;
+            }
+            free(message.data.buf);
+            printf("%s: post messaggio a tutti riuscita, egli verra' ascoltato di nuovo\n", sender);
+            free(sender);
 
         } break;
 
@@ -988,9 +1084,12 @@ int elab_request(int fd_c, message_t message){
                 setHeader(&reply_msg.hdr, OP_NICK_UNKNOWN, ""); //come sender metto "server"?
                 sendHeader(fd_c, &reply_msg.hdr);
 
+                printf("%s: richiesta di post di un file fallita perche l'utente non e; regisrato\n", sender);
                 update_stats(&chattyStats, 0, 0, 0, 0, 0, 0, 1); //aumento il numero degli errori
+                free(message.data.buf);
+                free(sender);
 
-                return -1;
+                return -2;
             }
 
 
@@ -1002,9 +1101,12 @@ int elab_request(int fd_c, message_t message){
                 setHeader(&reply_msg.hdr, OP_FAIL, "");
                 sendHeader(fd_c, &reply_msg.hdr);
 
+                printf("%s: richiesta di post di un file fallita perche l'utente non e; connesso\n", sender);
                 update_stats(&chattyStats, 0, 0, 0, 0, 0, 0, 1); //aumento il numero degli errori
+                free(message.data.buf);
+                free(sender);
 
-                return -1;
+                return -2;
             }
 
 
@@ -1020,12 +1122,21 @@ int elab_request(int fd_c, message_t message){
 
                 printf("errore: file troppo grande per essere inviato\n");
 
+                free(fileData.buf);
                 update_stats(&chattyStats, 0, 0, 0, 0, 0, 0, 1);
 
                 setHeader(&reply_msg.hdr, OP_MSG_TOOLONG, "");
                 if(sendHeader(fd_c, &reply_msg.hdr) <= 0){
+                    printf("%s: richiesta di post di un file fallita perche il file e' trppo grande\n", sender);
+
+                    free(message.data.buf);
+                    free(sender);
+
                     return -1;
                 }
+                printf("%s: richiesta di post di un file fallita perche il file e' trppo grande\n", sender);
+                free(message.data.buf);
+                free(sender);
 
                 return -1;
             }
@@ -1044,7 +1155,12 @@ int elab_request(int fd_c, message_t message){
                 setHeader(&reply_msg.hdr, OP_NICK_UNKNOWN, "");
                 sendHeader(fd_c, &reply_msg.hdr);
 
+                free(fileData.buf);
                 update_stats(&chattyStats, 0, 0, 0, 0, 0, 0, 1); //aumento il numero degli errori
+
+                printf("%s: richiesta di post di un file fallita perche il destinatario non e; registrato a chatty\n", sender);
+                free(message.data.buf);
+                free(sender);
 
                 return -1;
             }
@@ -1056,8 +1172,9 @@ int elab_request(int fd_c, message_t message){
 
             //costruisco il path del file
             char *path = (char *)malloc(pathlen * sizeof(char));
+            memset(path, 0, pathlen * sizeof(char));
 
-            strncat(path, val.DirName, strlen(val.DirName));
+            strncpy(path, val.DirName, strlen(val.DirName));
             strcat(path, "/");
 
             char *slash  = strrchr(message.data.buf, '/'); //controllo se esiste uno slash in message.data.buf
@@ -1075,13 +1192,20 @@ int elab_request(int fd_c, message_t message){
 
             //apro il file
             FILE *file_to_deliver = fopen(path, "w");
+            free(path);
 
             if (!file_to_deliver){ //se fallisce l'apertura
                 printf("errore nell'open del file in %s\n", path);
+
                 setHeader(&reply_msg.hdr, OP_FAIL, "");
                 sendHeader(fd_c, &reply_msg.hdr);
 
+                printf("%s: richiesta di post di un file fallita perche fallimento apertura del file\n", sender);
+                free(fileData.buf);
                 update_stats(&chattyStats, 0, 0, 0, 0, 0, 0, 1); //aumento il numero degli errori
+                free(message.data.buf);
+                free(sender);
+
                 return -1;
             }
 
@@ -1089,11 +1213,22 @@ int elab_request(int fd_c, message_t message){
 
             if (x != fileData.hdr.len) { //se c'e' un errore nella scrittura
                 printf("errore nella scrittura\n");
+                free(fileData.buf);
+                free(message.data.buf);
+                printf("%s: richiesta di post di un file fallita perche errore nella scrittura\n", sender);
+                free(sender);
+
                 return -1;
             }
 
+            free(fileData.buf);
+
             if (fclose(file_to_deliver) != 0) {
                 printf("errore nella chiusura del file da inviare\n");
+                free(message.data.buf);
+                printf("%s: richiesta di post di un file fallita perche errore nella close\n", sender);
+                free(sender);
+
                 return -1;
             }
 
@@ -1124,8 +1259,16 @@ int elab_request(int fd_c, message_t message){
                 //aggiorno la history del destinatario e marco il messaggio come non letto
                 if (-1 == add_to_history(dest, &msg_to_deliver, 0, 0)){
 
-                    if (sendHeader(fd_c, &reply_msg.hdr) <= 0)
+                    if (sendHeader(fd_c, &reply_msg.hdr) <= 0) {
+                        free(message.data.buf);
+                        printf("%s: richiesta di post di un file fallita errore nel send header\n", sender);
+                        free(sender);
+
                         return -1;
+                    }
+                    free(message.data.buf);
+                    printf("%s: richiesta di post di un file fallita history del destinatario piena\n", sender);
+                    free(sender);
 
                     return 1; //history del destinatario piena, il fd del mittente verra' rimesso in coda
                 }
@@ -1140,8 +1283,16 @@ int elab_request(int fd_c, message_t message){
                 //aggiorno la history del destinatario e marco il messaggio come letto
                 if (-1 == add_to_history(dest, &msg_to_deliver, 1, 0)){
 
-                    if (sendHeader(fd_c, &reply_msg.hdr) <= 0)
+                    if (sendHeader(fd_c, &reply_msg.hdr) <= 0) {
+                        free(message.data.buf);
+                        printf("%s: richiesta di post di un file fallita errore lettura header\n", sender);
+                        free(sender);
                         return -1;
+                    }
+                    free(message.data.buf);
+                    printf("%s: richiesta di post di un file fallita history del destinatario piena\n", sender);
+                    free(sender);
+
 
                     return 1; //history del destinatario piena, il fd del mittente verra' rimesso in coda
                 }
@@ -1149,8 +1300,15 @@ int elab_request(int fd_c, message_t message){
 
 
             if(sendHeader(fd_c, &reply_msg.hdr) <= 0) {
+                free(message.data.buf);
+                                        printf("%s: richiesta di post di un file fallita errore lettura header\n", sender);
+                free(sender);
+
                 return -1;
             }
+            free(message.data.buf);
+            printf("%s: post file riuscita, egli verra' ascoltato di nuovo\n", sender);
+            free(sender);
 
         } break;
 
@@ -1172,8 +1330,10 @@ int elab_request(int fd_c, message_t message){
                 sendHeader(fd_c, &reply_msg.hdr);
 
                 update_stats(&chattyStats, 0, 0, 0, 0, 0, 0, 1); //aumento il numero degli errori
+                free(message.data.buf);
+                free(sender);
 
-                return -1;
+                return -2;
             }
 
 
@@ -1186,8 +1346,10 @@ int elab_request(int fd_c, message_t message){
                 sendHeader(fd_c, &reply_msg.hdr);
 
                 update_stats(&chattyStats, 0, 0, 0, 0, 0, 0, 1); //aumento il numero degli errori
+                free(message.data.buf);
+                free(sender);
 
-                return -1;
+                return -2;
             }
 
 
@@ -1195,8 +1357,9 @@ int elab_request(int fd_c, message_t message){
 
             //costruisco il path del file
             char *path = (char *)malloc(pathlen * sizeof(char));
+            memset(path, 0, pathlen * sizeof(char));
 
-            strncat(path, val.DirName, strlen(val.DirName));
+            strncpy(path, val.DirName, strlen(val.DirName));
             strcat(path, "/");
 
             char *slash  = strrchr(message.data.buf, '/'); //controllo se esiste uno slash in message.data.buf
@@ -1212,6 +1375,7 @@ int elab_request(int fd_c, message_t message){
 
             //apro il file
             FILE *file_to_deliver = fopen(path, "r");
+            free(path);
 
             if (!file_to_deliver){ //se fallisce l'apertura
                 printf("errore nell'open del file in %s\n", path);
@@ -1219,6 +1383,9 @@ int elab_request(int fd_c, message_t message){
                 sendHeader(fd_c, &reply_msg.hdr);
 
                 update_stats(&chattyStats, 0, 0, 0, 0, 0, 0, 1); //aumento il numero degli errori
+                free(message.data.buf);
+                free(sender);
+
                 return -1;
             }
 
@@ -1230,16 +1397,25 @@ int elab_request(int fd_c, message_t message){
 
             //alloco la memoria per il buffer che ospitera' il contenuto del file
             char *buffer = (char *)malloc((filesize+1) * sizeof(char));
+            memset(buffer, 0, (filesize+1) * sizeof(char));
 
             int x = fread(buffer, sizeof(char), filesize, file_to_deliver);
 
             if (x != filesize) { //se c'e' un errore nella lettura
                 printf("errore nella lettura\n");
+                free(buffer);
+                free(message.data.buf);
+                free(sender);
+
                 return -1;
             }
 
             if (fclose(file_to_deliver) != 0) {
                 printf("errore nella chiusura del file da inviare\n");
+                free(buffer);
+                free(message.data.buf);
+                free(sender);
+
                 return -1;
             }
 
@@ -1251,14 +1427,29 @@ int elab_request(int fd_c, message_t message){
             //setta l'header del messaggio di risposta dal server per il mittente di GETFILE_OP
             setHeader(&reply_msg.hdr, OP_OK, "");
 
-            if (sendHeader(fd_c, &reply_msg.hdr) <= 0)
+            if (sendHeader(fd_c, &reply_msg.hdr) <= 0) {
+                free(buffer);
+                free(message.data.buf);
+                free(sender);
+
                 return -1;
+            }
 
             setData(&reply_msg.data, sender, buffer, filesize + 1);
 
             if (sendData(fd_c, &reply_msg.data) < 0) {
+                free(buffer);
+                free(message.data.buf);
+                free(sender);
+
                 return -1;
             }
+
+            free(buffer);
+            free(message.data.buf);
+            printf("%s: get file riuscita, egli verra' ascoltato di nuovo\n", sender);
+            free(sender);
+
         } break;
 
 
@@ -1280,8 +1471,10 @@ int elab_request(int fd_c, message_t message){
                 sendHeader(fd_c, &reply_msg.hdr);
 
                 update_stats(&chattyStats, 0, 0, 0, 0, 0, 0, 1); //aumento il numero degli errori
+                free(message.data.buf);
+                free(sender);
 
-                return -1;
+                return -2;
             }
 
 
@@ -1294,8 +1487,10 @@ int elab_request(int fd_c, message_t message){
                 sendHeader(fd_c, &reply_msg.hdr);
 
                 update_stats(&chattyStats, 0, 0, 0, 0, 0, 0, 1); //aumento il numero degli errori
+                free(message.data.buf);
+                free(sender);
 
-                return -1;
+                return -2;
             }
 
 
@@ -1305,14 +1500,20 @@ int elab_request(int fd_c, message_t message){
             setHeader(&reply_msg.hdr, OP_OK, "");
 
             if (sendHeader(fd_c, &reply_msg.hdr) <= 0) {
+                free(message.data.buf);
+                free(sender);
+
                 return -1;
             }
 
-            int x = usrdt->size;
+            size_t x = usrdt->size;
 
-            setData(&reply_msg.data, "", (char *)&x,sizeof(size_t));
+            setData(&reply_msg.data, "", (char *)&x, sizeof(size_t));
 
             if (sendData(fd_c, &reply_msg.data) < 0) {
+                free(message.data.buf);
+                free(sender);
+
                 return -1;
             }
 
@@ -1325,8 +1526,13 @@ int elab_request(int fd_c, message_t message){
                 }
             }
 
+            printf("l'utente %s ha ricevuto lo storico messaggi con successo\n", sender);
             //aggiorno le statistiche: sono stati consegnati read_now messaggi di quelli non ancora letti
             update_stats(&chattyStats, 0, 0, read_now, (-read_now), 0, 0, 0);
+            free(message.data.buf);
+            printf("%s: get dello storico riuscita, egli verra' ascoltato di nuovo\n", sender);
+            free(sender);
+
         } break;
 
 
@@ -1335,6 +1541,8 @@ int elab_request(int fd_c, message_t message){
 
 
         case USRLIST_OP: {
+
+            printf("%s: richiesta della lista degli utenti\n", sender);
 
             //il client che tenta di ottenere la lista degli utenti non e' registrato
             if (NULL == icl_hash_find(hashtable, sender)){
@@ -1345,8 +1553,10 @@ int elab_request(int fd_c, message_t message){
                 sendHeader(fd_c, &reply_msg.hdr);
 
                 update_stats(&chattyStats, 0, 0, 0, 0, 0, 0, 1); //aumento il numero degli errori
+                free(message.data.buf);
+                free(sender);
 
-                return -1;
+                return -2;
             }
 
 
@@ -1359,8 +1569,10 @@ int elab_request(int fd_c, message_t message){
                 sendHeader(fd_c, &reply_msg.hdr);
 
                 update_stats(&chattyStats, 0, 0, 0, 0, 0, 0, 1); //aumento il numero degli errori
+                free(message.data.buf);
+                free(sender);
 
-                return -1;
+                return -2;
             }
 
 
@@ -1372,14 +1584,26 @@ int elab_request(int fd_c, message_t message){
             setHeader(&reply_msg.hdr, OP_OK, "");
 
             if (sendHeader(fd_c, &reply_msg.hdr) <= 0) {
+                free(message.data.buf);
+                free(buffer);
+                free(sender);
+
                 return -1;
             }
 
             setData(&reply_msg.data, "", buffer, length);
 
             if (sendData(fd_c, &reply_msg.data) < 0) {
+                free(message.data.buf);
+                free(buffer);
+                free(sender);
+
                 return -1;
             }
+            free(message.data.buf);
+            free(buffer);
+            printf("%s: get lista utenti riuscita, egli verra' ascoltato di nuovo\n", sender);
+            free(sender);
 
         } break;
 
@@ -1389,8 +1613,11 @@ int elab_request(int fd_c, message_t message){
 
         case UNREGISTER_OP: {
 
+            printf("%s: richiesta di deregistrazione\n", sender);
+            user_data_t *usrdt = (user_data_t *)icl_hash_find(hashtable, sender);
+
             //il client che tenta di deregistrarsi non e' registrato
-            if (NULL == icl_hash_find(hashtable, sender)){
+            if (NULL == usrdt){
 
                 printf("il client %s non e' registrato\n", sender);
 
@@ -1398,8 +1625,10 @@ int elab_request(int fd_c, message_t message){
                 sendHeader(fd_c, &reply_msg.hdr);
 
                 update_stats(&chattyStats, 0, 0, 0, 0, 0, 0, 1); //aumento il numero degli errori
+                free(message.data.buf);
+                free(sender);
 
-                return -1;
+                return -2;
             }
 
 
@@ -1412,37 +1641,47 @@ int elab_request(int fd_c, message_t message){
                 sendHeader(fd_c, &reply_msg.hdr);
 
                 update_stats(&chattyStats, 0, 0, 0, 0, 0, 0, 1); //aumento il numero degli errori
+                free(message.data.buf);
+                free(sender);
 
-                return -1;
+                return -2;
             }
 
             //l'operazione ha successo
 
-#if 0
+
             //l'utente viene disconnesso (e quindi eliminato dalla lista dei connessi)
             user_list = deleteNameFromList(user_list, sender);
 
-            int check_stats = update_stats(&chattyStats, 0, -1, 0, 0, 0, 0, 0);//diminuisco il numero degli utenti connessi
-            if (-1 == check_stats){
-            }
-#endif
+            update_stats(&chattyStats, 0, -1, 0, 0, 0, 0, 0);//diminuisco il numero degli utenti connessi
+
+            free_hist(usrdt); //si libera la memoria allocata per lo storico messaggi
+
             //l'utente viene deregistrato
             if (0 != icl_hash_delete(hashtable, sender, NULL, NULL)){
 
                 printf("utente %s deregistrazione fallita\n", sender);
+                free(message.data.buf);
+                free(sender);
+
                 return -1;
             }
 
-            int check_stats = update_stats(&chattyStats, -1, 0, 0, 0, 0, 0, 0);//diminuisco il numero degli utenti registrati
-            if (-1 == check_stats){
-            }
-
+            update_stats(&chattyStats, -1, 0, 0, 0, 0, 0, 0);//diminuisco il numero degli utenti registrati
+            
 
             setHeader(&reply_msg.hdr, OP_OK, "");
             if (sendHeader(fd_c, &reply_msg.hdr) <= 0) {
+                free(message.data.buf);
+                free(sender);
+
                 return -1;
             }
+            free(message.data.buf);
+    //        printf("%s: deregistrazione riuscita, egli verra' ascoltato di nuovo\n", sender);
+            free(sender);
 
+            return -3;
 
         } break;
 
@@ -1450,58 +1689,6 @@ int elab_request(int fd_c, message_t message){
 //oooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooo//
 //oooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooo//
 
-
-        case DISCONNECT_OP: {
-
-
-            //il client che tenta di disconnettersi non e' registrato
-            if (NULL == icl_hash_find(hashtable, sender)){
-
-                printf("il client %s non e' registrato\n", sender);
-
-                setHeader(&reply_msg.hdr, OP_NICK_UNKNOWN, ""); //come sender metto "server"?
-                sendHeader(fd_c, &reply_msg.hdr);
-
-                update_stats(&chattyStats, 0, 0, 0, 0, 0, 0, 1); //aumento il numero degli errori
-
-                return -1;
-            }
-
-
-            //il client che tenta di disconnettersi non e' connesso
-            if (NULL == listFind(user_list, sender)){
-
-                printf("il client %s non e' connesso\n", sender);
-
-                setHeader(&reply_msg.hdr, OP_FAIL, "");
-                sendHeader(fd_c, &reply_msg.hdr);
-
-                update_stats(&chattyStats, 0, 0, 0, 0, 0, 0, 1); //aumento il numero degli errori
-
-                return -1;
-            }
-
-
-            //l'operazione ha successo
-
-            //l'utente viene disconnesso (e quindi eliminato dalla lista dei connessi)
-            user_list = deleteNameFromList(user_list, sender);
-
-            int check_stats = update_stats(&chattyStats, 0, -1, 0, 0, 0, 0, 0);//diminuisco il numero degli utenti connessi
-            if (-1 == check_stats){
-            }
-
-
-            setHeader(&reply_msg.hdr, OP_OK, "");
-            if (sendHeader(fd_c, &reply_msg.hdr) <= 0) {
-                return -1;
-            }
-
-        } break;
-
-
-//oooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooo//
-//oooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooo//
 
         default: {
 
@@ -1509,10 +1696,10 @@ int elab_request(int fd_c, message_t message){
             setHeader(&reply_msg.hdr, OP_FAIL, ""); //come sender metto "server"?
             sendHeader(fd_c, &reply_msg.hdr);
             free(message.data.buf);
+            free(sender);
 
             return -1;
         } break;
-
     }
     return 0;
 }
