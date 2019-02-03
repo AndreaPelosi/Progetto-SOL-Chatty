@@ -129,4 +129,12 @@ message_t * retrieve_from_history(user_data_t *usrdt, int index, int *read_now);
 void update_user_fd(user_data_t *usrdt, int new_fd);
 
 
+/**
+    @function free_hist
+    @brief libera la memora allocata per lo storico messaggi relativo all'utente
+
+    @param usrdt        dati relativi all'utente
+*/
+void free_hist(user_data_t *usrdt);
+
 #endif //USER_H

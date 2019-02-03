@@ -19,6 +19,7 @@
 
 #include <stdio.h>
 #include <pthread.h>
+#include <string.h>
 
 #if defined(c_plusplus) || defined(__cplusplus)
 extern "C" {
@@ -41,7 +42,7 @@ typedef struct icl_hash_s {
 } icl_hash_t;
 
 icl_hash_t *
-icl_hash_create( int nbuckets, unsigned int (*hash_function)(void*), int (*hash_key_compare)(void*, void*), int divisore_lock );
+icl_hash_create( int nbuckets, unsigned int (*hash_function)(void*), int (*hash_key_compare)(void*, void*), int divisore_lock, int *dim_array_mtex);
 
 void
 * icl_hash_find(icl_hash_t *, void* );
