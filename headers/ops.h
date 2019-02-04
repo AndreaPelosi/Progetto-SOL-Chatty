@@ -58,7 +58,6 @@ typedef enum {
     OP_MSG_TOOLONG  = 28,  // messaggio con size troppo lunga
     OP_NO_SUCH_FILE = 29,  // il file richiesto non esiste
 
-    //OP_FILE_TOOHEAVY = 30, // il file che si vuole inviare e' troppo grande
     /*
      * aggiungere qui altri messaggi di ritorno che possono servire
      */

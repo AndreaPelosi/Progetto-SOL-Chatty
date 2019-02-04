@@ -135,6 +135,6 @@ void update_user_fd(user_data_t *usrdt, int new_fd);
 
     @param usrdt        dati relativi all'utente
 */
-void free_hist(user_data_t *usrdt);
+void free_hist(void *usrdt);
 
 #endif //USER_H
