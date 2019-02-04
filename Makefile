@@ -51,13 +51,11 @@ LIBS            = -pthread
 
 # aggiungere qui altri targets se necessario
 TARGETS		= chatty        \
-		  client	\
-		  *.o
+		  client
 
 
 # aggiungere qui i file oggetto da compilare
 OBJECTS		= conf_parsing.o	\
-		  queue.o	\
 		  connections.o	\
 		  icl_hash.o	\
 		  liste.o	\
@@ -74,7 +72,6 @@ INCLUDE_FILES   = connections.h \
 		  liste.h	\
 		  macrosctest.h	\
 		  macrothread.h	\
-		  queue.h	\
 		  user.h
 
 .PHONY: all clean cleanall test1 test2 test3 test4 test5 consegna

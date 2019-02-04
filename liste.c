@@ -191,6 +191,7 @@ char *toBuf(list_t *L) {
 	}
     buffer[L->numb_elems * (MAX_NAME_LENGTH + 1)] = '\0'; //aggiungo il terminatore alla stringa
 
+    printf("il buffer contiene i seguenti utenti: %s\n", buffer);
     return buffer;
 }
 

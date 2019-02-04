@@ -24,7 +24,7 @@
     @param conffile     percorso del file di configurazione
     @param val        struttura dove vengono memorizzati i valori di configurazione
 
-    @return 0 se ha successo, EXIT_FAILURE atrimenti
+    @return 0 se ha successo, -1 atrimenti
 */
 int conf_init( char *conffile, struct conf_values *val) {
     FILE *f1;
@@ -32,7 +32,7 @@ int conf_init( char *conffile, struct conf_values *val) {
     char *token; //token per strtok
     char *endptr; //per strtol
     int tksize; //size di token
-    int flag = 1; //flag che diventa 0 quando fgets su conffile raggiunge EOF
+
     val->UnixPath = NULL;
     val->MaxConnections = -1;
     val->ThreadsInPool = -1;
@@ -53,47 +53,28 @@ int conf_init( char *conffile, struct conf_values *val) {
         return -1;
     }
 
-    while (flag) {
+    while (fgets(buf, MAX_CONF_FILE_LINE_SIZE, f1)) {
 
-        buf = fgets(buf, MAX_CONF_FILE_LINE_SIZE, f1);
-
-        if (NULL == buf){
-            flag = 0;
-            if ((NULL == val->UnixPath) || (0 >= val->MaxConnections) || (0 >= val->ThreadsInPool) || (0 >= val->MaxMsgSize) \
-                || (0 >= val->MaxFileSize) || (0 >= val->MaxHistMsgs) || (NULL == val->DirName) || (NULL == val->StatFileName)){
-                    fprintf(stderr, "invalid conf file parsed\n");
-                    //free(buf);
-                    //buf = NULL;
-                    return -1;
-                }
-        }
-        // else if ('\n' == buf[0]) {
-//
-//        }
-         else if (buf[0] != '#') { //se buf[0] e' #, significa che la riga del file di configurazione e' un commento e va ignorata
+         if (buf[0] != '#') { //se buf[0] e' #, significa che la riga del file di configurazione e' un commento e va ignorata
             token = strtok(buf, " \t\n");
-        //    printf("token : %s\n", token);
+
             while (token) {
-        //        printf("ciao3, %s\n", token);
+
                 if (0 == strcmp(token, "UnixPath")){
-        //            printf("ciao4\n");
                     token = strtok(NULL, " \t\n"); //parsing della stringa "="
                     if (NULL == token){
                         fprintf(stderr, "invalid conf file parsed\n");
-                        free(buf); buf = NULL;
-                        return -1;
+                        continue;
                     } else {
                         token = strtok(NULL, " \t\n");
                         if (NULL == token){
                             fprintf(stderr, "invalid conf file parsed\n");
-                            free(buf); buf = NULL;
-                            return -1;
+                            continue;
                         } else {
                             tksize = strlen(token);
                             val->UnixPath = (char *)malloc((tksize + 1)*sizeof(char));
                             if(!val->UnixPath){
-                                free(buf);
-                                return -1;
+                                continue;
                             }
                             val->UnixPath = strcpy(val->UnixPath, token);
                             token = NULL;
@@ -103,20 +84,17 @@ int conf_init( char *conffile, struct conf_values *val) {
                     token = strtok(NULL, " \t\n"); //parsing della stringa "="
                     if (NULL == token){
                         fprintf(stderr, "invalid conf file parsed\n");
-                        free(buf); buf = NULL;
-                        return -1;
+                        continue;
                     } else {
                         token = strtok(NULL, " \t\n");
                         if (NULL == token){
                             fprintf(stderr, "invalid conf file parsed\n");
-                            free(buf); buf = NULL;
-                            return -1;
+                            continue;
                         } else {
                             tksize = strlen(token);
                             val->DirName = (char *)malloc((tksize + 1)*sizeof(char));
                             if(!val->DirName){
-                                free(buf);
-                                return -1;
+                                continue;
                             }
                             val->DirName = strcpy(val->DirName, token);
                             token = NULL;
@@ -126,20 +104,17 @@ int conf_init( char *conffile, struct conf_values *val) {
                     token = strtok(NULL, " \t\n"); //parsing della stringa "="
                     if (NULL == token){
                         fprintf(stderr, "invalid conf file parsed\n");
-                        free(buf); buf = NULL;
-                        return -1;
+                        continue;
                     } else {
                         token = strtok(NULL, " \t\n");
                         if (NULL == token){
                             fprintf(stderr, "invalid conf file parsed\n");
-                            free(buf); buf = NULL;
-                            return -1;
+                            continue;
                         } else {
                             tksize = strlen(token);
                             val->StatFileName = (char *)malloc((tksize + 1)*sizeof(char));
                             if(!val->StatFileName){
-                                free(buf);
-                                return -1;
+                                continue;
                             }
                             val->StatFileName = strcpy(val->StatFileName, token);
                             token = NULL;
@@ -149,25 +124,21 @@ int conf_init( char *conffile, struct conf_values *val) {
                     token = strtok(NULL, " \t\n"); //parsing della stringa "="
                     if (NULL == token){
                         fprintf(stderr, "invalid conf file parsed\n");
-                        free(buf); buf = NULL;
-                        return -1;
+                        continue;
                     } else {
                         token = strtok(NULL, " \t\n");
                         if (NULL == token){
                             fprintf(stderr, "invalid conf file parsed\n");
-                            free(buf); buf = NULL;
-                            return -1;
+                            continue;
                         } else {
                             val->MaxConnections = strtol(token, &endptr, 10);
                             if (endptr == token){
                                 fprintf(stderr, "invalid conf file parsed\n");
-                                free(buf); buf = NULL;
-                                return -1;
+                                continue;
                             }
                             if (*endptr != '\0' && *endptr != '\n'){
                                 fprintf(stderr, "invalid conf file parsed\n");
-                                free(buf); buf = NULL;
-                                return -1;
+                                continue;
                             }
                             token = NULL;
                         }
@@ -176,25 +147,21 @@ int conf_init( char *conffile, struct conf_values *val) {
                     token = strtok(NULL, " \t\n"); //parsing della stringa "="
                     if (NULL == token){
                         fprintf(stderr, "invalid conf file parsed\n");
-                        free(buf); buf = NULL;
-                        return -1;
+                        continue;
                     } else {
                         token = strtok(NULL, " \t\n");
                         if (NULL == token){
                             fprintf(stderr, "invalid conf file parsed\n");
-                            free(buf); buf = NULL;
-                            return -1;
+                            continue;
                         } else {
                             val->ThreadsInPool = strtol(token, &endptr, 10);
                             if (endptr == token){
                                 fprintf(stderr, "invalid conf file parsed\n");
-                                free(buf); buf = NULL;
-                                return -1;
+                                continue;
                             }
                             if (*endptr != '\0' && *endptr != '\n'){
                                 fprintf(stderr, "invalid conf file parsed\n");
-                                free(buf); buf = NULL;
-                                return -1;
+                                continue;
                             }
                             token = NULL;
                         }
@@ -203,26 +170,22 @@ int conf_init( char *conffile, struct conf_values *val) {
                     token = strtok(NULL, " \t\n"); //parsing della stringa "="
                     if (NULL == token){
                         fprintf(stderr, "invalid conf file parsed\n");
-                        free(buf); buf = NULL;
-                        return -1;
+                        continue;
                     } else {
                         token = strtok(NULL, " \t\n");
                         if (NULL == token){
                             fprintf(stderr, "invalid conf file parsed\n");
-                            free(buf); buf = NULL;
-                            return -1;
+                            continue;
                         } else {
                             val->MaxMsgSize = strtol(token, &endptr, 10);
                             if (endptr == token){
                                 fprintf(stderr, "invalid conf file parsed\n");
-                                free(buf); buf = NULL;
-                                return -1;
+                                continue;
                             }
                             if (*endptr != '\0' && *endptr != '\n'){
                                 fprintf(stderr, "invalid conf file parsed\n");
-                                free(buf); buf = NULL;
-                                return -1;
-                            }
+                                continue;
+                                }
                             token = NULL;
                         }
                     }
@@ -230,25 +193,21 @@ int conf_init( char *conffile, struct conf_values *val) {
                     token = strtok(NULL, " \t\n"); //parsing della stringa "="
                     if (NULL == token){
                         fprintf(stderr, "invalid conf file parsed\n");
-                        free(buf); buf = NULL;
-                        return -1;
+                        continue;
                     } else {
                         token = strtok(NULL, " \t\n");
                         if (NULL == token){
                             fprintf(stderr, "invalid conf file parsed\n");
-                            free(buf); buf = NULL;
-                            return -1;
+                            continue;
                         } else {
                             val->MaxFileSize = strtol(token, &endptr, 10);
                             if (endptr == token){
                                 fprintf(stderr, "invalid conf file parsed\n");
-                                free(buf); buf = NULL;
-                                return -1;
+                                continue;
                             }
                             if (*endptr != '\0' && *endptr != '\n'){
                                 fprintf(stderr, "invalid conf file parsed\n");
-                                free(buf); buf = NULL;
-                                return -1;
+                                continue;
                             }
                             token = NULL;
                         }
@@ -257,25 +216,21 @@ int conf_init( char *conffile, struct conf_values *val) {
                     token = strtok(NULL, " \t\n"); //parsing della stringa "="
                     if (NULL == token){
                         fprintf(stderr, "invalid conf file parsed\n");
-                        free(buf); buf = NULL;
-                        return -1;
+                        continue;
                     } else {
                         token = strtok(NULL, " \t\n");
                         if (NULL == token){
                             fprintf(stderr, "invalid conf file parsed\n");
-                            free(buf); buf = NULL;
-                            return -1;
+                            continue;
                         } else {
                             val->MaxHistMsgs = strtol(token, &endptr, 10);
                             if (endptr == token){
                                 fprintf(stderr, "invalid conf file parsed\n");
-                                free(buf); buf = NULL;
-                                return -1;
+                                continue;
                             }
                             if (*endptr != '\0' && *endptr != '\n'){
                                 fprintf(stderr, "invalid conf file parsed\n");
-                                free(buf); buf = NULL;
-                                return -1;
+                                continue;
                             }
                             token = NULL;
                         }
@@ -285,12 +240,18 @@ int conf_init( char *conffile, struct conf_values *val) {
                 }
             }
         }
-    //    free(buf); buf = NULL;
     }
 
-    free(buf); buf = NULL;
+    free(buf);
+    buf = NULL;
 
     ec_meno1( fclose(f1), "conf file close error");
+
+    if ((NULL == val->UnixPath) || (0 >= val->MaxConnections) || (0 >= val->ThreadsInPool) || (0 >= val->MaxMsgSize) \
+        || (0 >= val->MaxFileSize) || (0 >= val->MaxHistMsgs) || (NULL == val->DirName) || (NULL == val->StatFileName)){
+            fprintf(stderr, "invalid conf file parsed\n");
+            return -1;
+    }
 
    printf(" val.UnixPath = %s; \n val.MaxConnections = %d; \n val.ThreadsInPool = %d;\n val.MaxMsgSize = %d;\n val.MaxFileSize = %d;\n \
 val.MaxHistMsgs = %d; \n val.DirName = %s; \n val.StatFileName = %s; \n", val->UnixPath, val->MaxConnections, val->ThreadsInPool, val->MaxMsgSize, \

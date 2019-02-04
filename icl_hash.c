@@ -270,7 +270,6 @@ icl_hash_destroy(icl_hash_t *ht, void (*free_key)(void*), void (*free_data)(void
             next=curr->next;
             free(curr->key);
             if (*free_key && curr->key) (*free_key)(curr->key);
-            free_hist(curr->data);
             if (*free_data && curr->data) (*free_data)(curr->data);
             free(curr);
             curr=next;

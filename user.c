@@ -23,10 +23,7 @@
 #include <icl_hash.h>
 #include <connections.h>
 
-int user_data_init(user_data_t *usrdt, char *username, int fd, int MaxMsgSize, int MaxFileSize, int MaxHistMsgs){ // da completare
-
-    //usrdt = (user_data_t *)malloc(sizeof(user_data_t));
-    //if (!usrdt) return -1;
+int user_data_init(user_data_t *usrdt, char *username, int fd, int MaxMsgSize, int MaxFileSize, int MaxHistMsgs){
 
     int len = strlen(username);
     usrdt->username = (char *)malloc((len+1) * sizeof(char));
@@ -39,7 +36,7 @@ int user_data_init(user_data_t *usrdt, char *username, int fd, int MaxMsgSize, i
     usrdt->fd = fd;
     if (fd < 0) return -1;
 
-
+    //alloco lo spazio per un array di coppie (messaggio, bit di lettura)
     usrdt->hist = (history_t *)malloc(MaxHistMsgs * sizeof(history_t));
     memset(usrdt->hist, 0, MaxHistMsgs * sizeof(history_t));
 
@@ -48,12 +45,7 @@ int user_data_init(user_data_t *usrdt, char *username, int fd, int MaxMsgSize, i
 
     for (size_t i = 0; i < MaxHistMsgs; i++) {
 
-        ((usrdt->hist)[i]).msg_history = (message_t *)malloc(sizeof(message_t));
-        memset(((usrdt->hist)[i]).msg_history, 0, sizeof(message_t));
-
-        ((usrdt->hist)[i]).msg_history->data.buf = (char *)malloc(MaxMsgSize * sizeof(char));
-        memset(((usrdt->hist)[i]).msg_history->data.buf, 0, MaxMsgSize * sizeof(char));
-
+        ((usrdt->hist)[i]).msg_history = NULL;
         ((usrdt->hist)[i]).read_bit = 1; //permette agli elementi di essere sovrascritti
     }
 
@@ -79,6 +71,12 @@ int add_to_history(user_data_t *usrdt, message_t *msg_to_add, int read, int alre
         if(!already_locked)
             THREAD(pthread_mutex_unlock(&usrdt->mtex), "unlock in add_to_history");
         return -1;
+    }
+
+    if (NULL != ((usrdt->hist)[usrdt->index_to_write]).msg_history) {
+
+        free(((usrdt->hist)[usrdt->index_to_write]).msg_history->data.buf);
+        free(((usrdt->hist)[usrdt->index_to_write]).msg_history);
     }
 
 
@@ -208,16 +206,20 @@ void update_user_fd(user_data_t *usrdt, int new_fd) {
 }
 
 
-void free_hist(user_data_t *usrdt) {
+void free_hist(void *usrdt) {
 
-    THREAD(pthread_mutex_lock(&usrdt->mtex), "lock in free_hist");
+    user_data_t *usrdt1 = (user_data_t *)usrdt;
 
-    for (size_t i = 0; i < usrdt->size; i++) {
-        free(((usrdt->hist)[i]).msg_history->data.buf);
-        free(((usrdt->hist)[i]).msg_history);
+    THREAD(pthread_mutex_lock(&usrdt1->mtex), "lock in free_hist");
+
+    for (size_t i = 0; i < usrdt1->size; i++) {
+        free(((usrdt1->hist)[i]).msg_history->data.buf);
+        free(((usrdt1->hist)[i]).msg_history);
     }
+    free(usrdt1->username);
+    free(usrdt1->hist);
 
-    free(usrdt->hist);
+    THREAD(pthread_mutex_unlock(&usrdt1->mtex), "unlock in free_hist");
 
-    THREAD(pthread_mutex_unlock(&usrdt->mtex), "unlock in free_hist");
+    free(usrdt);
 }

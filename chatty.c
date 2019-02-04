@@ -48,7 +48,6 @@
 #include <conf_parsing.h>
 #include <connections.h>
 #include <stats.h>
-#include <queue.h>
 #include <icl_hash.h>
 #include <user.h>
 #include <liste.h>
@@ -173,7 +172,6 @@ int main(int argc, char *argv[]) {
     pthread_t *thread_pool;
 
 
-
     if (-1 == sig_manager()) { //serve davvero il questo controllo ?
         printf("installazione del gestore dei segnali fallita\n");
         exit(EXIT_FAILURE);
@@ -214,13 +212,6 @@ int main(int argc, char *argv[]) {
     //creazione lista degli utenti connessi
     user_list = createList();
 
-#if 0
-    //creazione cartella dove memorizzare i file
-    if (0 != mkdir(val.DirName, 0777)){
-        perror("creazione cartella per memorizzare i file");
-        return -1;
-    }
-#endif
 
     thread_pool = (pthread_t *)malloc(val.ThreadsInPool * sizeof(pthread_t)); //creazione del pool di thread che gestiranno le richieste dei client
     //forwardQ = createQ(val.MaxConnections); //creo una coda per i fd; il listener pusha fd, i thread del pool poppano
@@ -239,10 +230,6 @@ int main(int argc, char *argv[]) {
         THREAD(pthread_create(&thread_pool[i], NULL, &run_pool_element, NULL), "creando thread_pool");
     }
 
-    //inserire prima la creazione del pool di thread, dopo il main si sospende attendendo
-    //la join di tid_listener (?)
-    //i thread del pool sono joinable
-
     THREAD(pthread_create(&tid_listener, NULL, &run_listener, (void*)&sa), "creando tid_listener");
 
 
@@ -259,7 +246,7 @@ int main(int argc, char *argv[]) {
 
     destroyList(user_list); //distruggo la lista degli utenti online
 
-    icl_hash_destroy(hashtable, NULL, NULL, dim_array_mtex); //distruggo la tab hash degli utenti registrati
+    icl_hash_destroy(hashtable, NULL, free_hist, dim_array_mtex); //distruggo la tab hash degli utenti registrati
 
     ec_meno1(close(comm_pipe[0]), "close in main"); //chiudo la pipe sia in lett. che in scritt.
     ec_meno1(close(comm_pipe[1]), "close in main");
@@ -637,6 +624,8 @@ int elab_request(int fd_c, message_t message){
                 free(message.data.buf);
                 free(sender);
 
+                free_hist(usrdt);
+                //free(usrdt);
                 return -2;
                 update_stats(&chattyStats, 0, 0, 0, 0, 0, 0, 1); //aumento il numero degli errori
             }
@@ -656,6 +645,8 @@ int elab_request(int fd_c, message_t message){
                 free(message.data.buf);
                 free(sender);
 
+                free_hist(usrdt);
+                //free(usrdt);
                 return -2;
             }
 
@@ -673,6 +664,8 @@ int elab_request(int fd_c, message_t message){
                 free(message.data.buf);
                 free(sender);
 
+                free_hist(usrdt);
+                //free(usrdt);
                 return -2;
             }
 
@@ -689,6 +682,8 @@ int elab_request(int fd_c, message_t message){
                 free(message.data.buf);
                 free(sender);
 
+                free_hist(usrdt);
+                //free(usrdt);
                 return -2;
             }
 
@@ -1477,7 +1472,6 @@ int elab_request(int fd_c, message_t message){
                 return -2;
             }
 
-
             //il client che tenta di ottenere i messaggi nella history non e' connesso
             if (NULL == listFind(user_list, sender)){
 
@@ -1559,7 +1553,6 @@ int elab_request(int fd_c, message_t message){
                 return -2;
             }
 
-
             //il client che tenta di ottenere la lista degli utenti non e' connesso
             if (NULL == listFind(user_list, sender)){
 
@@ -1574,7 +1567,6 @@ int elab_request(int fd_c, message_t message){
 
                 return -2;
             }
-
 
             //operazione ha avuto successo
             char * buffer = toBuf(user_list); //memorizza nel buffer da inviare la lista degli utenti connessi
@@ -1668,7 +1660,7 @@ int elab_request(int fd_c, message_t message){
             }
 
             update_stats(&chattyStats, -1, 0, 0, 0, 0, 0, 0);//diminuisco il numero degli utenti registrati
-            
+
 
             setHeader(&reply_msg.hdr, OP_OK, "");
             if (sendHeader(fd_c, &reply_msg.hdr) <= 0) {
