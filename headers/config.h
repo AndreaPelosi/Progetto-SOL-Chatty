@@ -8,6 +8,11 @@
 /**
  * @file config.h
  * @brief File contenente alcune define con valori massimi utilizzabili
+ *
+ * @author Andrea Pelosi 547596
+ * Si dichiara che il contenuto di questo file è in ogni sua parte opera
+ * originale dell'autore
+ *
  */
 
 #if !defined(CONFIG_H_)

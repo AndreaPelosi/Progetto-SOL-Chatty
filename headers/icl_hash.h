@@ -6,9 +6,9 @@
  *
  */
 /**
- * @file
+ *  @file icl_hash.h
  *
- * Header file for icl_hash routines.
+ * @brief Header file for icl_hash routines.
  *
  */
 /* $Id$ */

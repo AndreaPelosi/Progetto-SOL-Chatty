@@ -12,6 +12,11 @@
 /**
  * @file  ops.h
  * @brief Contiene i codici delle operazioni di richiesta e risposta
+ *
+ * @author Andrea Pelosi 547596
+ * Si dichiara che il contenuto di questo file è in ogni sua parte opera
+ * originale dell'autore
+ *
  */
 
 

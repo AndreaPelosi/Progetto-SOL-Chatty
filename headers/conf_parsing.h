@@ -8,7 +8,11 @@
 /**
  * @file conf_parsing.h
  * @brief dichiarazione strutture e funzioni necessarie per il parsing del file
-            di configurazione del server
+ *          di configurazione del server
+ *
+ * @author Andrea Pelosi 547596
+ * Si dichiara che il contenuto di questo file è in ogni sua parte opera
+ * originale dell'autore
  */
 
 #ifndef CONF_PARSING_H
@@ -49,7 +53,7 @@ struct conf_values{
     @param conffile     percorso del file di configurazione
     @param val        struttura dove vengono memorizzati i valori di configurazione
 
-    @return 0 se ha successo, EXIT_FAILURE atrimenti
+    @return 0 se ha successo, -1 altrimenti
 */
 int conf_init( char *conffile, struct conf_values *val);
 

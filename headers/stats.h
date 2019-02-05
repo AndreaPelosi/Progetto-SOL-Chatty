@@ -5,6 +5,14 @@
  * Docenti: Prencipe, Torquati
  *
  */
+ /**
+ * @file user.h
+ * @brief contiene strutture e funzioni utili per la gestione dei dati degli utenti in Chatty
+ *
+ * @author Andrea Pelosi 547596
+ * Si dichiara che il contenuto di questo file è in ogni sua parte opera
+ * originale dell'autore
+ */
 #if !defined(MEMBOX_STATS_)
 #define MEMBOX_STATS_
 
@@ -22,7 +30,6 @@ struct statistics {
 };
 
 /* aggiungere qui altre funzioni di utilita' per le statistiche */
-
 
 
 /**

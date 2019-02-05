@@ -6,10 +6,12 @@
  *
  */
  /**
-    @file user.h
-    @brief contiene strutture e funzioni utili per la gestione dei dati degli utenti in Chatty
-
-    @author
+ * @file user.h
+ * @brief contiene strutture e funzioni utili per la gestione dei dati degli utenti in Chatty
+ *
+ * @author Andrea Pelosi 547596
+ * Si dichiara che il contenuto di questo file è in ogni sua parte opera
+ * originale dell'autore
  */
 #ifndef USER_H
 #define USER_H
@@ -46,7 +48,6 @@ typedef struct history {
 typedef struct userdata{
     char *username;
     int fd;
-    //qualcosa per memorizzare i file ricevuti
     pthread_mutex_t mtex;
     history_t *hist;
     int size;
@@ -114,6 +115,7 @@ int add_to_history_all(icl_hash_t *hashtable, char *user, message_t *msg_to_add,
     @param user         nome dell'utente da cui recuperare il messaggio
     @param index        indice relativo al messaggio da recuperare
     @param read_now     incrementa di 1 *read_now se il messaggio in questione e' consegnato per la prima volta
+
     @return history dell'utente associato a usrdt
 */
 message_t * retrieve_from_history(user_data_t *usrdt, int index, int *read_now);
@@ -130,11 +132,11 @@ void update_user_fd(user_data_t *usrdt, int new_fd);
 
 
 /**
-    @function free_hist
+    @function free_userdata
     @brief libera la memora allocata per lo storico messaggi relativo all'utente
 
     @param usrdt        dati relativi all'utente
 */
-void free_hist(void *usrdt);
+void free_userdata(void *usrdt);
 
 #endif //USER_H

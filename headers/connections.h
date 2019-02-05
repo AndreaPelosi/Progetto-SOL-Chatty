@@ -5,6 +5,16 @@
  * Docenti: Prencipe, Torquati
  *
  */
+ /**
+  * @file  connections.h
+  * @brief Contiene le funzioni che implementano il protocollo
+  *        tra i clients ed il server
+  *
+  * @author Andrea Pelosi 547596
+  * Si dichiara che il contenuto di questo file è in ogni sua parte opera
+  * originale dell'autore
+  *
+  */
 #ifndef CONNECTIONS_H_
 #define CONNECTIONS_H_
 
@@ -16,11 +26,6 @@
 
 #include <message.h>
 
-/**
- * @file  connection.h
- * @brief Contiene le funzioni che implementano il protocollo
- *        tra i clients ed il server
- */
 
 /**
  * @function openConnection
@@ -44,18 +49,17 @@ int openConnection(char* path, unsigned int ntimes, unsigned int secs);
  * @param hdr    puntatore all'header del messaggio da ricevere
  *
  * @return <=0 se c'e' stato un errore
- *         (se <0 errno deve essere settato, se == 0 connessione chiusa)
  */
 int readHeader(long connfd, message_hdr_t *hdr);
 /**
-    @function readDataHeader
-    @brief Legge l'header dei dati del messaggio
-
-    @param fd       descrittore della connessione
-    @param data_hdr     puntatore all'header dei dati del messaggio
-
-    @return <=0 se c'e' stato un errore
-*/
+ *    @function readDataHeader
+ *    @brief Legge l'header dei dati del messaggio
+ *
+ *    @param fd       descrittore della connessione
+ *    @param data_hdr     puntatore all'header dei dati del messaggio
+ *
+ *    @return <=0 se c'e' stato un errore
+ */
 int readDataHeader(long fd, message_data_hdr_t *data_hdr);
 /**
  * @function readData
@@ -65,7 +69,6 @@ int readDataHeader(long fd, message_data_hdr_t *data_hdr);
  * @param data   puntatore al body del messaggio
  *
  * @return <=0 se c'e' stato un errore
- *         (se <0 errno deve essere settato, se == 0 connessione chiusa)
  */
 int readData(long fd, message_data_t *data);
 
@@ -77,7 +80,6 @@ int readData(long fd, message_data_t *data);
  * @param data   puntatore al messaggio
  *
  * @return <=0 se c'e' stato un errore
- *         (se <0 errno deve essere settato, se == 0 connessione chiusa)
  */
 int readMsg(long fd, message_t *msg);
 
@@ -118,7 +120,7 @@ int sendDataHeader(long fd, message_data_hdr_t *data_hdr);
 int sendData(long fd, message_data_t *msg);
 
 /**
-    @function
+    @function sendHeader
     @brief Invia l'header del messaggio al server
 
     @param fd       descrittore della connessione
