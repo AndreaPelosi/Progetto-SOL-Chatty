@@ -59,7 +59,7 @@ OBJECTS		= conf_parsing.o	\
 		  connections.o	\
 		  icl_hash.o	\
 		  liste.o	\
-		  user.o
+		  user.o	
 
 # aggiungere qui gli altri include 
 INCLUDE_FILES   = connections.h \
@@ -72,7 +72,7 @@ INCLUDE_FILES   = connections.h \
 		  liste.h	\
 		  macrosctest.h	\
 		  macrothread.h	\
-		  user.h
+		  user.h	
 
 .PHONY: all clean cleanall test1 test2 test3 test4 test5 consegna
 .SUFFIXES: .c .h

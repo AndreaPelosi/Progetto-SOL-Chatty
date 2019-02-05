@@ -8,7 +8,11 @@
 /**
  * @file conf_parsing.c
  * @brief Implementazione della funzione necessaria per il parsing del file di
-            configurazione del server
+ *           configurazione del server
+ *
+ * @author Andrea Pelosi 547596
+ * Si dichiara che il contenuto di questo file è in ogni sua parte opera
+ * originale dell'autore
  */
 
 #include <stdio.h>
@@ -17,15 +21,7 @@
 #include <conf_parsing.h>
 #include <macrosctest.h>
 
-/**
-    @function conf_init
-    @brief parsa uno dei file di configurazione e setta il server con i valori del file
 
-    @param conffile     percorso del file di configurazione
-    @param val        struttura dove vengono memorizzati i valori di configurazione
-
-    @return 0 se ha successo, -1 atrimenti
-*/
 int conf_init( char *conffile, struct conf_values *val) {
     FILE *f1;
     char *buf;

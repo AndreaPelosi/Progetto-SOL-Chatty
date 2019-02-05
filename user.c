@@ -6,10 +6,12 @@
  *
  */
  /**
-    @file user.c
-    @brief contiene funzioni utili per la gestione dei dati degli utenti in Chatty
-
-    @author
+ *   @file user.c
+ *   @brief contiene funzioni utili per la gestione dei dati degli utenti in Chatty
+ *
+ * @author Andrea Pelosi 547596
+ * Si dichiara che il contenuto di questo file è in ogni sua parte opera
+ * originale dell'autore
  */
 
 #include <stdlib.h>
@@ -123,7 +125,7 @@ int add_to_history_all(icl_hash_t *hashtable, char *user, message_t *msg_to_add,
     setHeader(&msg->hdr, TXT_MESSAGE, user);
 
     strncpy(msg->hdr.sender, msg_to_add->hdr.sender, MAX_NAME_LENGTH + 1);
-//    strncpy(msg->data.hdr.receiver, msg_to_add->data.hdr.receiver, MAX_NAME_LENGTH + 1);
+
     msg->data.hdr.len = msg_to_add->data.hdr.len;
 
     msg->data.buf = (char *)malloc(msg_to_add->data.hdr.len * sizeof(char));
@@ -206,7 +208,7 @@ void update_user_fd(user_data_t *usrdt, int new_fd) {
 }
 
 
-void free_hist(void *usrdt) {
+void free_userdata(void *usrdt) {
 
     user_data_t *usrdt1 = (user_data_t *)usrdt;
 

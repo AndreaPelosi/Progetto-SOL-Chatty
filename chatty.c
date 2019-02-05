@@ -8,8 +8,10 @@
 /**
  * @file chatty.c
  * @brief File principale del server chatterbox
-
-    @author
+ *
+ * @author Andrea Pelosi 547596
+ * Si dichiara che il contenuto di questo file è in ogni sua parte opera
+ * originale dell'autore
  */
 #define _POSIX_C_SOURCE 200809L
 #include <stdio.h>
@@ -26,17 +28,6 @@
 #include <sys/un.h>
 #include <sys/select.h>
 #include <fcntl.h>
-
-#if 0
-#include "./headers/macrothread.h"
-#include "./headers/macrosctest.h"
-#include "message.h"
-#include "ops.h"
-#include "config.h"
-#include "conf_parsing.h"
-#include "connections.h"
-#include "stats.h"
-#endif
 
 #include <sys/stat.h>
 
@@ -70,14 +61,14 @@ struct statistics  chattyStats = { 0,0,0,0,0,0,0 };
 */
 static struct conf_values val = { NULL, 0, 0, 0, 0, 0, NULL, NULL };
 
-//coda condivisa: il listener mette fd e i thread del pool li estraggono
-//static queue_t *forwardQ = NULL;
-
-
+/* pipe di comunicazione tra thread listener e thread_pool; listener scrive un fd
+ * dal quale e' pronta la lettura, un thread del pool legge dalla pipe tale fd
+*/
 static int comm_pipe[2];
 
-//variabile globale, viene settata a 1 alla ricezione di un segnale tra SIGINT, SIGTERM, SIGQUIT
+//viene settata a 1 alla ricezione di un segnale tra SIGINT, SIGTERM, SIGQUIT
 volatile sig_atomic_t sigstop = 0;
+//viene settata a 1 alla ricezione di SIGUSR1
 volatile sig_atomic_t sigusr = 0;
 
 static fd_set set; //insieme dei fd attivi
@@ -137,17 +128,23 @@ int elab_request(int fd, message_t message);
 /**
     @function sig_manager
     @brief inizializza il gestore dei segnali (anche per sigusr1)
-
-    @param
-
-    @return 0 se l'operazione ha successo, -1 altrimenti
 */
-int sig_manager();
+void sig_manager();
 
+/**
+    @function termination_handler
+    @brief gestore per i segnali SIGQUIT, SIGINT, SIGTERM
 
-
+    @param sig       segnale ricevuto
+*/
 void termination_handler(int sig);
 
+/**
+    @function stats_handler
+    @brief gestore per il segnale SIGUSR1
+
+    @param sig      segnale ricevuto
+*/
 void stats_handler(int sig);
 
 /**
@@ -165,19 +162,15 @@ static void usage(const char *progname) {
 
 
 int main(int argc, char *argv[]) {
-    int conf_verifier = 0;
+    int conf_verifier = 0; //diventa -1 se c'e' un fallimento nel parsing del file di configurazione
+    int dim_array_mtex; //size dell'array di mutex per gestire la concorrenza in hashtable
     struct sockaddr_un sa;
 
     pthread_t tid_listener;
     pthread_t *thread_pool;
 
-
-    if (-1 == sig_manager()) { //serve davvero il questo controllo ?
-        printf("installazione del gestore dei segnali fallita\n");
-        exit(EXIT_FAILURE);
-    } else {
-        printf("installazione del gestore dei segnali avvenuta con successo!\n");
-    }
+    sig_manager();
+    printf("installazione del gestore dei segnali avvenuta con successo!\n");
 
     if (3 != argc){
         usage("chatty");
@@ -189,7 +182,7 @@ int main(int argc, char *argv[]) {
         exit(EXIT_FAILURE);
     }
 
-    if ( (0 == strcmp(argv[2],"DATA/chatty.conf1")) ||(0 == strcmp(argv[2],"DATA/chatty.conf2")) ){ //verificare se va bene cosi o se si puo perfezionare
+    if ( (0 == strcmp(argv[2],"DATA/chatty.conf1")) ||(0 == strcmp(argv[2],"DATA/chatty.conf2")) ){
         conf_verifier = conf_init(argv[2], &val);
     } else{
         usage("chatty");
@@ -204,24 +197,24 @@ int main(int argc, char *argv[]) {
     strncpy(sa.sun_path, val.UnixPath, UNIX_PATH_MAX);
     sa.sun_family = AF_UNIX;
 
-    int dim_array_mtex; //size dell'array di mutex per gestire la concorrenza in hashtable
+
+    /***** CREAZIONE E INIZIALIZZAZIONE STRUTTURE DATI *****/
+
     //creazione tabella hash
     hashtable = icl_hash_create(HASHTABLE_LENGTH, NULL, NULL, val.MaxConnections, &dim_array_mtex);
-
 
     //creazione lista degli utenti connessi
     user_list = createList();
 
-
-    thread_pool = (pthread_t *)malloc(val.ThreadsInPool * sizeof(pthread_t)); //creazione del pool di thread che gestiranno le richieste dei client
-    //forwardQ = createQ(val.MaxConnections); //creo una coda per i fd; il listener pusha fd, i thread del pool poppano
+    //creazione del pool di thread che gestiranno le richieste dei client
+    thread_pool = (pthread_t *)malloc(val.ThreadsInPool * sizeof(pthread_t));
 
     if (0 != pipe(comm_pipe)) {
         printf("fallimento nella creazione della pipe di comunicazione tra listener e thread_pool\n");
         exit(EXIT_FAILURE);
     }
 
-    if (fcntl(comm_pipe[0], F_SETFL, O_NONBLOCK) < 0) { //scrivere a che serve
+    if (fcntl(comm_pipe[0], F_SETFL, O_NONBLOCK) < 0) { //la pipe in lettura sara' non bloccante
         perror("fcntl error");
         exit(EXIT_FAILURE);
     }
@@ -240,13 +233,14 @@ int main(int argc, char *argv[]) {
     }
 
 
-    //libero la memoria
+
+    /***** LIBERAZIONE DELLA MEMORIA DINAMICA ALLOCATA *****/
 
     free(thread_pool);
 
     destroyList(user_list); //distruggo la lista degli utenti online
 
-    icl_hash_destroy(hashtable, NULL, free_hist, dim_array_mtex); //distruggo la tab hash degli utenti registrati
+    icl_hash_destroy(hashtable, NULL, free_userdata, dim_array_mtex); //distruggo la tab hash degli utenti registrati
 
     ec_meno1(close(comm_pipe[0]), "close in main"); //chiudo la pipe sia in lett. che in scritt.
     ec_meno1(close(comm_pipe[1]), "close in main");
@@ -267,7 +261,7 @@ int main(int argc, char *argv[]) {
 
 
 
-int sig_manager() {
+void sig_manager() {
 
     sigset_t set;
     struct sigaction siga;
@@ -279,24 +273,20 @@ int sig_manager() {
 
     siga.sa_handler = SIG_IGN;
 
-    ec_meno1(sigaction(SIGPIPE, &siga, NULL), "sigaction error");
+    ec_meno1(sigaction(SIGPIPE, &siga, NULL), "sigaction error"); //ignoro SIGPIPE
 
     siga.sa_handler = termination_handler;
-
+    //installo termination_handler per SIGINT, SIGTERM, SIGQUIT
     ec_meno1(sigaction(SIGINT, &siga, NULL), "sigaction error");
     ec_meno1(sigaction(SIGTERM, &siga, NULL), "sigaction error");
     ec_meno1(sigaction(SIGQUIT, &siga, NULL), "sigaction error");
 
-    //ricordarsi di bloccare i segnali esplicitamente durante la gestione di ogni singolo segnale
-
-    siga.sa_handler = stats_handler;
+    siga.sa_handler = stats_handler; //installo stats_handler per SIGUSR1
 
     ec_meno1(sigaction(SIGUSR1, &siga, NULL), "sigaction error");
 
     ec_meno1(sigemptyset(&set), "sigemptyset error"); //svuoto il set
     ec_meno1(pthread_sigmask(SIG_SETMASK, &set, NULL), "sigmask error");
-
-    return 0;
 }
 
 
@@ -315,7 +305,7 @@ void termination_handler(int sig) {
     sigstop = 1; //il programma deve terminare
     pthread_cond_broadcast(&cond_pipe);
 
-    for (int i = 0; sigmsg[i].signum > 0; i++) {
+    for (int i = 0; sigmsg[i].signum > 0; i++) { //scrivo quale segnale ho catturato
         if (sigmsg[i].signum == sig) {
             write(1, sigmsg[i].msg, strlen(sigmsg[i].msg));
             write(1, "\n", 1);
@@ -328,6 +318,7 @@ void stats_handler(int sig) {
 
     sigusr = 1; //il programma deve stampare in un file le statistiche
 }
+
 
 int update_stats(struct statistics *chattyStats, int nu, int no, int nd, int nnd, int nfd, int nfnd, int ne){
 
@@ -355,7 +346,6 @@ int update_stats(struct statistics *chattyStats, int nu, int no, int nd, int nnd
 
     return 0;
 }
-
 
 
 
@@ -412,7 +402,7 @@ void *run_listener(void * arg){
         int sel = select((fd_num + 1), &rdset, NULL, NULL, &timeout);
         if (-1 ==  sel){
             perror("errore select thread listener");
-        //    return 1;
+
         } else if (0 != sel){
 
             for (fd = 0; fd <= fd_num; fd++) {
@@ -420,6 +410,7 @@ void *run_listener(void * arg){
 
                     if (fd == fd_skt) { //nuova connessione con un client
                         THREAD(pthread_mutex_lock(&mtex_stats), "lock in run_listener");
+
                         if (chattyStats.nonline >= val.MaxConnections){
 
                             THREAD(pthread_mutex_unlock(&mtex_stats), "unlock in run_listener");
@@ -439,7 +430,7 @@ void *run_listener(void * arg){
                             THREAD(pthread_mutex_lock(&mtex_set), "lock in run_listener");
                             FD_SET(fd_c, &set);
                             THREAD(pthread_mutex_unlock(&mtex_set), "unlock in run_listener");
-                            //il client non e' ancora online
+
                             if (fd_c > fd_num) fd_num = fd_c;
                         }
                     } else { //passo il fd ad un thread per elaborare le richieste
@@ -449,10 +440,10 @@ void *run_listener(void * arg){
                         THREAD(pthread_mutex_unlock(&mtex_set), "unlock in run_listener");
 
                         if (-1 == write(comm_pipe[1], &fd, sizeof(int))) {
-                            perror("ERROREEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEwrite nel listener");
+                            perror("write nel listener");
                             continue;
                         }
-
+                        //risveglia un thread del pool in attesa di leggere dalla pipe
                         THREAD(pthread_cond_signal(&cond_pipe),"signal in run_listener");
                     }
                 }
@@ -487,18 +478,18 @@ void* run_pool_element(void *arg){
     message_t msg;
 
     while (!sigstop) {
-        //int fd = popQ(forwardQ);
+
         int fd = -1;
         int res = -1;
 
         THREAD(pthread_mutex_lock(&mtex_pipe), "lock in run_pool_element");
 
         while (-1 == res) {
-            res = read(comm_pipe[0], &fd, sizeof(int));
+            res = read(comm_pipe[0], &fd, sizeof(int)); //la read non e' bloccante
 
             if (-1 == res) {
 
-                if (errno == EAGAIN) {
+                if (errno == EAGAIN) { //non e' stato letto nulla dal thread
                     THREAD(pthread_cond_wait(&cond_pipe, &mtex_pipe), "wait in run_pool_element");
 
                     if (sigstop) { //se e' stato inviato un segnale e il processo deve terminare
@@ -506,7 +497,7 @@ void* run_pool_element(void *arg){
                         pthread_exit(NULL);
                     }
                 } else {
-                    perror("ERROREEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEE read in un worker; fallimento nella retrieve di un fd");
+                    perror("read in un worker; fallimento nella retrieve di un fd");
                     pthread_exit(NULL);
                 }
             }
@@ -515,25 +506,18 @@ void* run_pool_element(void *arg){
         THREAD(pthread_mutex_unlock(&mtex_pipe), "unlock in run_pool_element");
 
 
-        int r = readHeader(fd, &msg.hdr);
+        int r = readHeader(fd, &msg.hdr); //legge l'header del messaggio dal fd
 
-        if (r < 0) {
-
-            printf("fd %d errore lettura dell'header\n", fd);
-            perror("ERROREEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEE leggendo header");
-        //    free(msg.data.buf);
-            int check_stats = update_stats(&chattyStats, 0, -1, 0, 0, 0, 0, 0);//diminuisco il numero degli utenti connessi
-        } else if (r > 0){
+        if (r > 0){
 
             int ans = elab_request(fd, msg);
-            //free(msg.data.buf);
 
             if (ans < -2) { //deregistrazione e disconnessione implicita dell'utente
 
                 printf("una deregistrazione e' avvenuta con successo\n");
             } else if (-2 == ans) { //utente ha provato a fare operazioni senza essere registrato/connesso
 
-                printf("richiesta illegale, la statistica degli utenti connessi non deve essere aggiornate\n");
+                printf("richiesta illegale, la statistica degli utenti connessi non deve essere aggiornata\n");
             } else if (-1 == ans){ //operazione richiesta dall'utente fallita
 
                 printf("errore nell'elaborazione del messaggio, %d non verra' aggiunto nuovamente alla coda\n", fd);
@@ -544,10 +528,7 @@ void* run_pool_element(void *arg){
 
                     int check_stats = update_stats(&chattyStats, 0, -1, 0, 0, 0, 0, 0);//diminuisco il numero degli utenti connessi
                 }
-                //controllare se aggiungere la lock
-                //controllare se aggiungere anche deleteFdFromList
 
-                //???int control = update_stats(&chattyStats, 0, 1, 0, 0, 0, 0, 0);
             } else if (0 == ans){
                 //printf("elaborazione del messaggio avvenuta con successo, %d verra' aggiunto nuovamente alla coda\n", fd);
 
@@ -563,7 +544,7 @@ void* run_pool_element(void *arg){
                 THREAD(pthread_mutex_unlock(&mtex_set), "unlock in run_pool_element");
             }
 
-        } else { //se r == 0
+        } else { //se r <= 0
 
             //l'utente viene disconnesso (e quindi eliminato dalla lista dei connessi)
             user_list = deleteFdFromList(user_list, fd);
@@ -571,9 +552,6 @@ void* run_pool_element(void *arg){
             if (0 < chattyStats.nonline) {
                 update_stats(&chattyStats, 0, -1, 0, 0, 0, 0, 0);//diminuisco il numero degli utenti connessi
             }
-
-            printf("numero utenti connessi: %lu  \n", chattyStats.nonline);
-
 
             printf("lettura su %d terminata, il fd non verra' aggiunto nuovamente alla coda\n", fd);
         }
@@ -589,7 +567,6 @@ int elab_request(int fd_c, message_t message){
     message_t reply_msg;
 
     char *sender = strdup(message.hdr.sender);
-    //char *sender = message.hdr.sender;
 
     printf("l'utente %s sta lavorando sul fd %d\n", sender, fd_c);
 
@@ -620,33 +597,31 @@ int elab_request(int fd_c, message_t message){
 
             //errore nell'inizializzazione della struttura che contiene i dati dell'utente
             if (-1 == user_data_init(usrdt, sender, fd_c, val.MaxMsgSize, val.MaxFileSize, val.MaxHistMsgs)){
-                //inviare un messaggio al client dove si dice "registrazione fallita, riprovare" ?
+
                 free(message.data.buf);
                 free(sender);
+                free_userdata(usrdt);
 
-                free_hist(usrdt);
-                //free(usrdt);
                 return -2;
                 update_stats(&chattyStats, 0, 0, 0, 0, 0, 0, 1); //aumento il numero degli errori
             }
 
-            //e' gia' stato raggiunto MaxConnections: la registrazione fallisce
-            THREAD(pthread_mutex_lock(&mtex_stats), "lock in elab_request");
 
+            THREAD(pthread_mutex_lock(&mtex_stats), "lock in elab_request");
+            //e' gia' stato raggiunto MaxConnections: la registrazione fallisce
             if (chattyStats.nonline >= val.MaxConnections){
 
                 printf("numero massimo di connessioni contemporanee raggiunto, registrazione fallita\n");
                 THREAD(pthread_mutex_unlock(&mtex_stats), "unlock in elab_request");
 
-                setHeader(&reply_msg.hdr, OP_FAIL, ""); //come sender metto "server"?
+                setHeader(&reply_msg.hdr, OP_FAIL, "");
                 sendHeader(fd_c, &reply_msg.hdr);
 
                 update_stats(&chattyStats, 0, 0, 0, 0, 0, 0, 1); //aumento il numero degli errori
                 free(message.data.buf);
                 free(sender);
+                free_userdata(usrdt);
 
-                free_hist(usrdt);
-                //free(usrdt);
                 return -2;
             }
 
@@ -663,9 +638,8 @@ int elab_request(int fd_c, message_t message){
                 update_stats(&chattyStats, 0, 0, 0, 0, 0, 0, 1); //aumento il numero degli errori
                 free(message.data.buf);
                 free(sender);
+                free_userdata(usrdt);
 
-                free_hist(usrdt);
-                //free(usrdt);
                 return -2;
             }
 
@@ -674,16 +648,14 @@ int elab_request(int fd_c, message_t message){
             if(NULL == icl_hash_insert(hashtable, (void *)sender, (void *) usrdt)){
                 printf("errore nella registrazione di %s\n", sender);
 
-
-                setHeader(&reply_msg.hdr, OP_FAIL, ""); //come sender metto "server"?
+                setHeader(&reply_msg.hdr, OP_FAIL, "");
                 sendHeader(fd_c, &reply_msg.hdr);
 
                 update_stats(&chattyStats, 0, 0, 0, 0, 0, 0, 1); //aumento il numero degli errori
                 free(message.data.buf);
                 free(sender);
+                free_userdata(usrdt);
 
-                free_hist(usrdt);
-                //free(usrdt);
                 return -2;
             }
 
@@ -749,9 +721,8 @@ int elab_request(int fd_c, message_t message){
             }
 
 
-            //e' gia' stato raggiunto MaxConnections: il nuovo tentativo di connessione fallisce
             THREAD(pthread_mutex_lock(&mtex_stats), "lock in elab_request");
-
+            //e' gia' stato raggiunto MaxConnections: il nuovo tentativo di connessione fallisce
             if (chattyStats.nonline >= val.MaxConnections){
 
                 printf("numero massimo di connessioni contemporanee raggiunto, connessione fallita\n");
@@ -773,11 +744,7 @@ int elab_request(int fd_c, message_t message){
             //il client riesce a connettersi
             update_stats(&chattyStats, 0, 1, 0, 0, 0, 0, 0); //aumento il numero degli utenti connessi
 
-            //non inserisco tra gli utenti connessi se c'e' gia'
-            if (NULL == listFind(user_list, sender)){
-
-                user_list = insertListHead(user_list, sender, fd_c); //aggiunge il nick e il fd alla lista degli utenti connessi
-            }
+            user_list = insertListHead(user_list, sender, fd_c); //aggiunge il nick e il fd alla lista degli utenti connessi
 
             char * buffer =  toBuf(user_list); //memorizza nel buffer da inviare la lista degli utenti connessi
             int length = strlen(buffer); //lunghezza del buffer
@@ -825,7 +792,7 @@ int elab_request(int fd_c, message_t message){
 
                 printf("il client %s non e' registrato\n", sender);
 
-                setHeader(&reply_msg.hdr, OP_NICK_UNKNOWN, ""); //come sender metto "server"?
+                setHeader(&reply_msg.hdr, OP_NICK_UNKNOWN, "");
                 sendHeader(fd_c, &reply_msg.hdr);
 
                 update_stats(&chattyStats, 0, 0, 0, 0, 0, 0, 1); //aumento il numero degli errori
@@ -909,16 +876,15 @@ int elab_request(int fd_c, message_t message){
 
                 //aggiorno la history del destinatario e marco il messaggio come non letto
                 if (-1 == add_to_history(dest, &msg_to_deliver, 0, 0)){
-                    //setHeader(&reply_msg.hdr, OP_FAIL, "");
 
                     if (sendHeader(fd_c, &reply_msg.hdr) <= 0) {
                         free(message.data.buf);
-                                                printf("%s: richiesta di post messaggio fallita errore lettura header\n", sender);
+                        printf("%s: richiesta di post messaggio fallita errore lettura header\n", sender);
                         free(sender);
                         return -1;
                     }
                     free(message.data.buf);
-                                                printf("%s: richiesta di post messaggio fallita history piena\n", sender);
+                    printf("%s: richiesta di post messaggio fallita history piena\n", sender);
                     free(sender);
 
                     return 1; //history del destinatario piena, il fd del mittente verra' rimesso in coda
@@ -933,27 +899,24 @@ int elab_request(int fd_c, message_t message){
 
                 //aggiorno la history del destinatario e marco il messaggio come letto
                 if (-1 == add_to_history(dest, &msg_to_deliver, 1, 0)){
-                    //setHeader(&reply_msg.hdr, OP_FAIL, "");
 
                     if (sendHeader(fd_c, &reply_msg.hdr) <= 0) {
                         free(message.data.buf);
                         free(sender);
-                                                printf("%s: richiesta di post messaggio fallita errore header\n", sender);
+                        printf("%s: richiesta di post messaggio fallita errore header\n", sender);
                         return -1;
                     }
                     free(message.data.buf);
-                                                printf("%s: richiesta di post messaggio fallita history piena\n", sender);
+                    printf("%s: richiesta di post messaggio fallita history piena\n", sender);
                     free(sender);
 
                     return 1; //history del destinatario piena, il fd del mittente verra' rimesso in coda
                 }
-
             }
 
 
             if (sendHeader(fd_c, &reply_msg.hdr) <= 0) {
                 free(message.data.buf);
-                                            printf("%s: richiesta di post messaggio fallita errore header\n", sender);
                 free(sender);
                 return -1;
             }
@@ -977,7 +940,7 @@ int elab_request(int fd_c, message_t message){
 
                 printf("il client %s non e' registrato\n", sender);
 
-                setHeader(&reply_msg.hdr, OP_NICK_UNKNOWN, ""); //come sender metto "server"?
+                setHeader(&reply_msg.hdr, OP_NICK_UNKNOWN, "");
                 sendHeader(fd_c, &reply_msg.hdr);
 
                 update_stats(&chattyStats, 0, 0, 0, 0, 0, 0, 1); //aumento il numero degli errori
@@ -1020,7 +983,6 @@ int elab_request(int fd_c, message_t message){
                 return -1;
             }
 
-
             //operazione ha avuto successo
 
             //setta l'header del messaggio di risposta dal server per il mittente di POSTTXTALL_OP
@@ -1034,24 +996,17 @@ int elab_request(int fd_c, message_t message){
             int nonline = 0;
             int noffline = 0; //numero di utenti online e offline al momento dell'invio a tutti del messaggio
 
-            //invio il messaggio a tutti gli utenti regstrati e lo aggiungo nella history di ognuno
-        //    if (1 == add_to_history_all(hashtable, sender, &msg_to_deliver, &nonline, &noffline)) {
-        //        free(message.data.buf);
-        //        free(sender);
-//
-//                return 1;
-//            }
+
             add_to_history_all(hashtable, sender, &msg_to_deliver, &nonline, &noffline);
 
             //aumento sia il numero dei messaggi consegnati che quelli non consegnati
-            //in accordo all'aggiornamento ai contatori nonline e noffline fatto da add_to_history_all
+            //in accordo all'aggiornamento dei contatori nonline e noffline fatto da add_to_history_all
             update_stats(&chattyStats, 0, 0, nonline, noffline, 0, 0, 0);
 
             printf("i messaggi consegnati con successo sono %d, quelli non consegnati sono %d\n", nonline, noffline);
 
             if (sendHeader(fd_c, &reply_msg.hdr) <= 0) {
                 free(message.data.buf);
-                                        printf("%s: richiesta di post messaggio fallita errore header\n", sender);
                 free(sender);
 
                 return -1;
@@ -1076,7 +1031,7 @@ int elab_request(int fd_c, message_t message){
 
                 printf("il client %s non e' registrato\n", sender);
 
-                setHeader(&reply_msg.hdr, OP_NICK_UNKNOWN, ""); //come sender metto "server"?
+                setHeader(&reply_msg.hdr, OP_NICK_UNKNOWN, "");
                 sendHeader(fd_c, &reply_msg.hdr);
 
                 printf("%s: richiesta di post di un file fallita perche l'utente non e; regisrato\n", sender);
@@ -1108,8 +1063,6 @@ int elab_request(int fd_c, message_t message){
             message_data_t fileData; //ci memorizzo i dati del file
             readData(fd_c, &fileData);
 
-            //printf("ecco il contenuto del file :%s\n", fileData.buf);
-
             printf("questa e' la size del file che si vuole inviare: %d\n", fileData.hdr.len);
 
             //se il file e' troppo grande per essere inviato
@@ -1138,7 +1091,6 @@ int elab_request(int fd_c, message_t message){
 
 
             char *receiver = message.data.hdr.receiver; //nickname del destinatario
-            //int buf_len = message.data.hdr.len;
 
             user_data_t *dest = icl_hash_find(hashtable, receiver);
 
@@ -1159,7 +1111,6 @@ int elab_request(int fd_c, message_t message){
 
                 return -1;
             }
-
 
             //il file puo' essere inviato
 
@@ -1296,7 +1247,6 @@ int elab_request(int fd_c, message_t message){
 
             if(sendHeader(fd_c, &reply_msg.hdr) <= 0) {
                 free(message.data.buf);
-                                        printf("%s: richiesta di post di un file fallita errore lettura header\n", sender);
                 free(sender);
 
                 return -1;
@@ -1321,7 +1271,7 @@ int elab_request(int fd_c, message_t message){
 
                 printf("il client %s non e' registrato\n", sender);
 
-                setHeader(&reply_msg.hdr, OP_NICK_UNKNOWN, ""); //come sender metto "server"?
+                setHeader(&reply_msg.hdr, OP_NICK_UNKNOWN, "");
                 sendHeader(fd_c, &reply_msg.hdr);
 
                 update_stats(&chattyStats, 0, 0, 0, 0, 0, 0, 1); //aumento il numero degli errori
@@ -1462,7 +1412,7 @@ int elab_request(int fd_c, message_t message){
 
                 printf("il client %s non e' registrato\n", sender);
 
-                setHeader(&reply_msg.hdr, OP_NICK_UNKNOWN, ""); //come sender metto "server"?
+                setHeader(&reply_msg.hdr, OP_NICK_UNKNOWN, "");
                 sendHeader(fd_c, &reply_msg.hdr);
 
                 update_stats(&chattyStats, 0, 0, 0, 0, 0, 0, 1); //aumento il numero degli errori
@@ -1486,7 +1436,6 @@ int elab_request(int fd_c, message_t message){
 
                 return -2;
             }
-
 
             //l'operazione ha successo
 
@@ -1543,7 +1492,7 @@ int elab_request(int fd_c, message_t message){
 
                 printf("il client %s non e' registrato\n", sender);
 
-                setHeader(&reply_msg.hdr, OP_NICK_UNKNOWN, ""); //come sender metto "server"?
+                setHeader(&reply_msg.hdr, OP_NICK_UNKNOWN, "");
                 sendHeader(fd_c, &reply_msg.hdr);
 
                 update_stats(&chattyStats, 0, 0, 0, 0, 0, 0, 1); //aumento il numero degli errori
@@ -1613,7 +1562,7 @@ int elab_request(int fd_c, message_t message){
 
                 printf("il client %s non e' registrato\n", sender);
 
-                setHeader(&reply_msg.hdr, OP_NICK_UNKNOWN, ""); //come sender metto "server"?
+                setHeader(&reply_msg.hdr, OP_NICK_UNKNOWN, "");
                 sendHeader(fd_c, &reply_msg.hdr);
 
                 update_stats(&chattyStats, 0, 0, 0, 0, 0, 0, 1); //aumento il numero degli errori
@@ -1641,13 +1590,12 @@ int elab_request(int fd_c, message_t message){
 
             //l'operazione ha successo
 
-
             //l'utente viene disconnesso (e quindi eliminato dalla lista dei connessi)
             user_list = deleteNameFromList(user_list, sender);
 
             update_stats(&chattyStats, 0, -1, 0, 0, 0, 0, 0);//diminuisco il numero degli utenti connessi
 
-            free_hist(usrdt); //si libera la memoria allocata per lo storico messaggi
+            free_userdata(usrdt); //si libera la memoria allocata per lo storico messaggi
 
             //l'utente viene deregistrato
             if (0 != icl_hash_delete(hashtable, sender, NULL, NULL)){
@@ -1670,7 +1618,6 @@ int elab_request(int fd_c, message_t message){
                 return -1;
             }
             free(message.data.buf);
-    //        printf("%s: deregistrazione riuscita, egli verra' ascoltato di nuovo\n", sender);
             free(sender);
 
             return -3;
@@ -1684,8 +1631,8 @@ int elab_request(int fd_c, message_t message){
 
         default: {
 
-            printf("operazione non riconosciuta\n"); //printf? in questo modo lo stampa lato server
-            setHeader(&reply_msg.hdr, OP_FAIL, ""); //come sender metto "server"?
+            printf("operazione non riconosciuta\n");
+            setHeader(&reply_msg.hdr, OP_FAIL, "");
             sendHeader(fd_c, &reply_msg.hdr);
             free(message.data.buf);
             free(sender);

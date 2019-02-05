@@ -132,7 +132,6 @@ icl_hash_find(icl_hash_t *ht, void* key)
 
     if(!ht || !key) return NULL;
 
-//    char *buf = key;
     hash_val = (* ht->hash_function)(key) % ht->nbuckets;
 
     lock_index = (int)(hash_val/ht->divisore_lock);
@@ -182,7 +181,7 @@ icl_hash_insert(icl_hash_t *ht, void* key, void *data)
     curr->key = (char *)malloc( (strlen(key)+1) * sizeof(char));
     memset(curr->key, 0, (strlen(key)+1) *sizeof(char));
     strncpy(curr->key, key, strlen(key)+1);
-    //curr->key = strdup((const char *)key);
+
     curr->data = data;
     curr->next = ht->buckets[hash_val]; /* add at start */
 
@@ -190,7 +189,6 @@ icl_hash_insert(icl_hash_t *ht, void* key, void *data)
     ht->nentries++;
 
     THREAD(pthread_mutex_unlock( &((ht->mtex_hash)[lock_index]) ),"unlock in icl_hash_insert");
-//    printf("questo e' curr->key: %s\n", (char*)curr->key);
 
     return curr;
 }

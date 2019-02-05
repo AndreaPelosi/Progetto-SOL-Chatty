@@ -5,6 +5,16 @@
  * Docenti: Prencipe, Torquati
  *
  */
+ /**
+  * @file  connections.c
+  * @brief Contiene le funzioni che implementano il protocollo
+  *        tra i clients ed il server
+  *
+  * @author Andrea Pelosi 547596
+  * Si dichiara che il contenuto di questo file è in ogni sua parte opera
+  * originale dell'autore
+  *
+  */
 #ifndef CONNECTIONS_C_
 #define CONNECTIONS_C_
 
@@ -25,10 +35,8 @@
 
 int openConnection(char* path, unsigned int ntimes, unsigned int secs){
     int fd_c;
-    //int nwritten;
     int retry = 0; //numero di retry della connessione effettuati
-    //char buf[100];
-//
+
     ntimes = (ntimes > MAX_RETRIES) ? MAX_RETRIES : ntimes;
     secs = (secs > MAX_SLEEPING) ? MAX_SLEEPING : secs;
 
@@ -49,10 +57,7 @@ int openConnection(char* path, unsigned int ntimes, unsigned int secs){
             return -1;
         }
     }
-//    nwritten = write(fd_c, "hey bro", 8);
-//    ec_meno1(nwritten, "openConnection write error");
-//    ec_meno1(read(fd_c, buf, 100), "openConnection read error");
-//    printf("openConnection got :%s\n", buf);
+
     return fd_c;
 }
 

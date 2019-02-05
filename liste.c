@@ -186,7 +186,9 @@ char *toBuf(list_t *L) {
 
 	for (size_t i = 0; i < L->numb_elems; i++) {
 			strncpy(aux, curr->word, MAX_NAME_LENGTH + 1);
-			aux += MAX_NAME_LENGTH + 1;
+			aux += MAX_NAME_LENGTH;
+            *aux = '\n';
+            aux++;
             curr = curr->next;
 	}
     buffer[L->numb_elems * (MAX_NAME_LENGTH + 1)] = '\0'; //aggiungo il terminatore alla stringa
