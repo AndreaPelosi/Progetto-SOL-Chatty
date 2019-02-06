@@ -666,7 +666,7 @@ int elab_request(int fd_c, message_t message){
             user_list = insertListHead(user_list, sender, fd_c); //aggiunge il nick e il fd alla lista degli utenti connessi
 
             char *buffer = toBuf(user_list); //memorizza nel buffer da inviare la lista degli utenti connessi
-            int length = strlen(buffer); //lunghezza del buffer
+            int length = user_list->numb_elems * (MAX_NAME_LENGTH + 1); //lunghezza del buffer
 
             //setto Header e Dati per la risposta del server al client
             setHeader(&reply_msg.hdr, OP_OK, "");
@@ -747,7 +747,7 @@ int elab_request(int fd_c, message_t message){
             user_list = insertListHead(user_list, sender, fd_c); //aggiunge il nick e il fd alla lista degli utenti connessi
 
             char * buffer =  toBuf(user_list); //memorizza nel buffer da inviare la lista degli utenti connessi
-            int length = strlen(buffer); //lunghezza del buffer
+            int length = user_list->numb_elems * (MAX_NAME_LENGTH + 1); //lunghezza del buffer
 
             //aggiorno il fd relativo all'utente col nuovo fd sulla quale avverra' la comunicazione client-server
             update_user_fd(usrdt, fd_c);
@@ -1519,7 +1519,7 @@ int elab_request(int fd_c, message_t message){
 
             //operazione ha avuto successo
             char * buffer = toBuf(user_list); //memorizza nel buffer da inviare la lista degli utenti connessi
-            int length = strlen(buffer); //lunghezza del buffer
+            int length = user_list->numb_elems * (MAX_NAME_LENGTH + 1); //lunghezza del buffer
 
             //setto Header e Dati per la risposta del server al client
             setHeader(&reply_msg.hdr, OP_OK, "");
@@ -1591,7 +1591,9 @@ int elab_request(int fd_c, message_t message){
             //l'operazione ha successo
 
             //l'utente viene disconnesso (e quindi eliminato dalla lista dei connessi)
+            printf("numero degli el della lista: %d\n", user_list->numb_elems);
             user_list = deleteNameFromList(user_list, sender);
+            printf("numero degli el della lista: %d\n", user_list->numb_elems);
 
             update_stats(&chattyStats, 0, -1, 0, 0, 0, 0, 0);//diminuisco il numero degli utenti connessi
 

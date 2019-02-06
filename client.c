@@ -230,6 +230,7 @@ static int execute_requestreply(int connfd, operation_t *o) {
 	    return -1;
 	}
 	int nusers = msg.data.hdr.len / (MAX_NAME_LENGTH+1);
+    printf("nusers e' %d, msg.data.hdr.len e' %d\n", nusers, msg.data.hdr.len);
 	assert(nusers > 0);
 	printf("Lista utenti online stampata da %s:\n", sname);
 	for(int i=0,p=0;i<nusers; ++i, p+=(MAX_NAME_LENGTH+1)) {

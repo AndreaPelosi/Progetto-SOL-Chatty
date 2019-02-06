@@ -171,8 +171,11 @@ icl_hash_insert(icl_hash_t *ht, void* key, void *data)
     THREAD(pthread_mutex_lock( &((ht->mtex_hash)[lock_index]) ),"lock in icl_hash_insert");
 
     for (curr=ht->buckets[hash_val]; curr != NULL; curr=curr->next)
-        if ( ht->hash_key_compare(curr->key, key))
+        if ( ht->hash_key_compare(curr->key, key)) {
+            THREAD(pthread_mutex_unlock( &((ht->mtex_hash)[lock_index]) ),"unlock in icl_hash_insert");
             return(NULL); /* key already exists */
+        }
+
 
     /* if key was not found */
     curr = (icl_entry_t*)malloc(sizeof(icl_entry_t));
