@@ -6,8 +6,8 @@
  *
  */
  /**
- * @file user.h
- * @brief contiene strutture e funzioni utili per la gestione dei dati degli utenti in Chatty
+ * @file stats.h
+ * @brief contiene strutture e funzioni utili per la gestione delle statistiche di Chatty
  *
  * @author Andrea Pelosi 547596
  * Si dichiara che il contenuto di questo file è in ogni sua parte opera

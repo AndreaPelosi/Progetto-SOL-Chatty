@@ -1,6 +1,7 @@
 #include<stdio.h>
 #include<string.h>
 #include<stdlib.h>
+#include <pthread.h>
 
 
 typedef struct node{
@@ -12,6 +13,7 @@ typedef struct node{
 typedef struct list{
     node_t *list;
     int numb_elems;
+    pthread_mutex_t mtex_list;
 } list_t;
 
 
