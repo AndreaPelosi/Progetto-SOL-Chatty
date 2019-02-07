@@ -91,7 +91,7 @@ static pthread_cond_t cond_pipe = PTHREAD_COND_INITIALIZER;
     @param chattyStats       puntatore a struct statistics
     @param nu,no,nd,nnd,nfd,nfnd,ne       incremento/decremento dei valori memorizzati nella struttura
 */
-int update_stats(struct statistics *chattyStats, int nu, int no, int nd, int nnd, int nfd, int nfnd, int ne);
+void update_stats(struct statistics *chattyStats, int nu, int no, int nd, int nnd, int nfd, int nfnd, int ne);
 
 
 
@@ -128,8 +128,10 @@ int elab_request(int fd, message_t message);
 /**
     @function sig_manager
     @brief inizializza il gestore dei segnali (anche per sigusr1)
+
+    @return 0 se l'operazione ha successo, -1 altrimenti
 */
-void sig_manager();
+int sig_manager();
 
 /**
     @function termination_handler
@@ -169,8 +171,12 @@ int main(int argc, char *argv[]) {
     pthread_t tid_listener;
     pthread_t *thread_pool;
 
-    sig_manager();
-    printf("installazione del gestore dei segnali avvenuta con successo!\n");
+    if (0 != sig_manager()) {
+        printf("installazione del gestore dei segnali fallita, riavviare il server\n");
+        exit(EXIT_FAILURE);
+    } else {
+        printf("installazione del gestore dei segnali avvenuta con successo!\n");
+    }
 
     if (3 != argc){
         usage("chatty");
@@ -261,7 +267,7 @@ int main(int argc, char *argv[]) {
 
 
 
-void sig_manager() {
+int sig_manager() {
 
     sigset_t set;
     struct sigaction siga;
@@ -287,6 +293,8 @@ void sig_manager() {
 
     ec_meno1(sigemptyset(&set), "sigemptyset error"); //svuoto il set
     ec_meno1(pthread_sigmask(SIG_SETMASK, &set, NULL), "sigmask error");
+
+    return 0;
 }
 
 
@@ -320,7 +328,7 @@ void stats_handler(int sig) {
 }
 
 
-int update_stats(struct statistics *chattyStats, int nu, int no, int nd, int nnd, int nfd, int nfnd, int ne){
+void update_stats(struct statistics *chattyStats, int nu, int no, int nd, int nnd, int nfd, int nfnd, int ne){
 
     THREAD(pthread_mutex_lock(&mtex_stats), "lock in update_stats");
 
@@ -338,13 +346,8 @@ int update_stats(struct statistics *chattyStats, int nu, int no, int nd, int nnd
             printf("error: illegal stat value\n");
 
             THREAD(pthread_mutex_unlock(&mtex_stats), "unlock in update_stats");
-
-            return -1;
     }
-
     THREAD(pthread_mutex_unlock(&mtex_stats), "unlock in update_stats");
-
-    return 0;
 }
 
 
@@ -458,7 +461,7 @@ void *run_listener(void * arg){
     for (size_t i = 0; i <= fd_num; i++) {
         //chiudo i fd che potrebbero essere rimasti aperti sia in lettura che in scrittura
         if (-1 == shutdown(i, SHUT_RDWR)) {
-            if (errno != ENOTSOCK) { //lasciare questo?
+            if (errno != ENOTSOCK) {
                 perror("shutdown in thread_listener");
             }
         }
@@ -526,7 +529,7 @@ void* run_pool_element(void *arg){
                     //l'utente viene disconnesso (e quindi eliminato dalla lista dei connessi)
                     user_list = deleteFdFromList(user_list, fd);
 
-                    int check_stats = update_stats(&chattyStats, 0, -1, 0, 0, 0, 0, 0);//diminuisco il numero degli utenti connessi
+                    update_stats(&chattyStats, 0, -1, 0, 0, 0, 0, 0);//diminuisco il numero degli utenti connessi
                 }
 
             } else if (0 == ans){
@@ -710,7 +713,7 @@ int elab_request(int fd_c, message_t message){
 
                 printf("il client %s non e' registrato\n", sender);
 
-                setHeader(&reply_msg.hdr, OP_NICK_UNKNOWN, ""); //come sender metto "server"?
+                setHeader(&reply_msg.hdr, OP_NICK_UNKNOWN, "");
                 sendHeader(fd_c, &reply_msg.hdr);
 
                 update_stats(&chattyStats, 0, 0, 0, 0, 0, 0, 1); //aumento il numero degli errori
@@ -728,7 +731,7 @@ int elab_request(int fd_c, message_t message){
                 printf("numero massimo di connessioni contemporanee raggiunto, connessione fallita\n");
                 THREAD(pthread_mutex_unlock(&mtex_stats), "unlock in elab_request");
 
-                setHeader(&reply_msg.hdr, OP_FAIL, ""); //come sender metto "server"?
+                setHeader(&reply_msg.hdr, OP_FAIL, "");
                 sendHeader(fd_c, &reply_msg.hdr);
 
                 update_stats(&chattyStats, 0, 0, 0, 0, 0, 0, 1); //aumento il numero degli errori

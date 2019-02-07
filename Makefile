@@ -9,8 +9,13 @@
 ##########################################################
 # IMPORTANTE: completare la lista dei file da consegnare
 # 
-FILE_DA_CONSEGNARE=Makefile chatty.c message.h ops.h stats.h config.h \
-		   DATA/chatty.conf1 DATA/chatty.conf2 connections.h 
+FILE_DA_CONSEGNARE=Makefile chatty.c headers/message.h headers/ops.h \
+		   headers/stats.h headers/config.h headers/conf_parsing.h \
+		   headers/connections.h headers/icl_hash.h headers/liste.h \
+		   headers/macrosctest.h headers/macrothread.h headers/user.h \
+		   client.c conf_parsing.c connections.c icl_hash.c liste.c \
+		   user.c Doxyfile script.sh tesconf.sh testfile.sh testleaks.sh \
+		   teststress.sh  DATA/chatty.conf1 DATA/chatty.conf2
 # inserire il nome del tarball: es. NinoBixio
 TARNAME=AndreaPelosi
 # inserire il corso di appartenenza: CorsoA oppure CorsoB

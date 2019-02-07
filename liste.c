@@ -1,3 +1,18 @@
+/*
+ * membox Progetto del corso di LSO 2017/2018
+ *
+ * Dipartimento di Informatica Università di Pisa
+ * Docenti: Prencipe, Torquati
+ *
+ */
+/**
+ * @file liste.c
+ * @brief contiene funzioni utili per la gestione della lista di utenti connessi in chatty
+ *
+ * @author Andrea Pelosi 547596
+ * Si dichiara che il contenuto di questo file è in ogni sua parte opera
+ * originale dell'autore
+ */
 #include <stdio.h>
 #include <string.h>
 #include <stdlib.h>
