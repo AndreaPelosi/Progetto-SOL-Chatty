@@ -24,7 +24,7 @@
 
 
 /**
- *  @struct header
+ *  @struct message_hdr_t
  *  @brief header del messaggio
  *
  *  @var op tipo di operazione richiesta al server
@@ -36,7 +36,7 @@ typedef struct {
 } message_hdr_t;
 
 /**
- *  @struct header
+ *  @struct message_data_hdr_t
  *  @brief header della parte dati
  *
  *  @var receiver nickname del ricevente
@@ -48,7 +48,7 @@ typedef struct {
 } message_data_hdr_t;
 
 /**
- *  @struct data
+ *  @struct message_data_t
  *  @brief body del messaggio
  *
  *  @var hdr header della parte dati
@@ -60,7 +60,7 @@ typedef struct {
 } message_data_t;
 
 /**
- *  @struct messaggio
+ *  @struct message_t
  *  @brief tipo del messaggio
  *
  *  @var hdr header

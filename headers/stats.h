@@ -19,6 +19,18 @@
 #include <stdio.h>
 #include <time.h>
 
+/**
+    @struct statistics
+    @brief raccoglie le statistiche del server
+
+    @param nusers
+    @param nonline
+    @param ndelivered
+    @param nnotdelivered
+    @param nfiledelivered
+    @param nfilenotdelivered
+    @param nerrors
+*/
 struct statistics {
     unsigned long nusers;                       // n. di utenti registrati
     unsigned long nonline;                      // n. di utenti connessi
