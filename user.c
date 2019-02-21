@@ -48,7 +48,7 @@ int user_data_init(user_data_t *usrdt, char *username, int fd, int MaxMsgSize, i
     for (size_t i = 0; i < MaxHistMsgs; i++) {
 
         ((usrdt->hist)[i]).msg_history = NULL;
-        ((usrdt->hist)[i]).read_bit = 1; //permette agli elementi di essere sovrascritti
+        ((usrdt->hist)[i]).read_bit = 1; //il bit e' 1, quindi il messaggio puo' essere sovrascritto
     }
 
     THREAD(pthread_mutex_init(&usrdt->mtex, NULL),"mutex_init in user_data_init");
@@ -150,30 +150,16 @@ int add_to_history_all(icl_hash_t *hashtable, char *user, message_t *msg_to_add,
 
             (*noffline)++;
 
-            add_to_history(dp, msg, 0, 1);
             //aggiorno la history del destinatario e marco il messaggio come non letto
-            /*if (-1 == add_to_history(dp, msg, 0, 1)){
-                THREAD(pthread_mutex_unlock(&dp->mtex), "unlock in add_to_history_all");
-
-                free(msg->data.buf);
-                free(msg);
-                return 1; //history del destinatario piena, il fd del mittente verra' rimesso in coda
-            }*/
-
+            add_to_history(dp, msg, 0, 1);
 
         } else { //il destinatario e' online
             printf("il destinatario e' online, messaggio inviato con successo\n");
 
             (*nonline)++;
-            add_to_history(dp, msg, 1, 1);
-            //aggiorno la history del destinatario e marco il messaggio come letto
-            /*if (-1 == add_to_history(dp, msg, 1, 1)){
-                THREAD(pthread_mutex_unlock(&dp->mtex), "unlock in add_to_history_all");
 
-                free(msg->data.buf);
-                free(msg);
-                return 1; //history del destinatario piena, il fd del mittente verra' rimesso in coda
-            }*/
+            //aggiorno la history del destinatario e marco il messaggio come letto
+            add_to_history(dp, msg, 1, 1);
         }
         THREAD(pthread_mutex_unlock(&dp->mtex), "unlock in add_to_history_all");
     }

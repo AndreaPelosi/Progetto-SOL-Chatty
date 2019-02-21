@@ -89,9 +89,10 @@ static pthread_cond_t cond_pipe = PTHREAD_COND_INITIALIZER;
     @brief incrementa e decrementa i valori delle statistiche
 
     @param chattyStats       puntatore a struct statistics
-    @param nu,no,nd,nnd,nfd,nfnd,ne       incremento/decremento dei valori memorizzati nella struttura
+    @param statnumb          numero della statistica da aggiornare
+    @param value             valore da sommare alla vecchia statistica
 */
-void update_stats(struct statistics *chattyStats, int nu, int no, int nd, int nnd, int nfd, int nfnd, int ne);
+void update_stats(struct statistics *chattyStats, int statnumb, int value);
 
 
 
@@ -328,24 +329,53 @@ void stats_handler(int sig) {
 }
 
 
-void update_stats(struct statistics *chattyStats, int nu, int no, int nd, int nnd, int nfd, int nfnd, int ne){
+void update_stats(struct statistics *chattyStats, int statnumb, int value){
 
     THREAD(pthread_mutex_lock(&mtex_stats), "lock in update_stats");
 
-    chattyStats->nusers += (nu);
-    chattyStats->nonline += (no);
-    chattyStats->ndelivered += (nd);
-    chattyStats->nnotdelivered += (nnd);
-    chattyStats->nfiledelivered += (nfd);
-    chattyStats->nfilenotdelivered += (nfnd);
-    chattyStats->nerrors += (ne);
+    switch (statnumb) {
+        case 0: {
+            chattyStats->nusers += (value);
+            break;
+        }
+
+        case 1: {
+            chattyStats->nonline += (value);
+            break;
+        }
+
+        case 2: {
+            chattyStats->ndelivered += (value);
+            break;
+        }
+
+        case 3: {
+            chattyStats->nnotdelivered += (value);
+            break;
+        }
+
+        case 4: {
+            chattyStats->nfiledelivered += (value);
+            break;
+        }
+
+        case 5: {
+            chattyStats->nfilenotdelivered += (value);
+            break;
+        }
+
+        case 6: {
+            chattyStats->nerrors += (value);
+            break;
+        }
+
+    }
+
 
     if (chattyStats->nusers < 0 || chattyStats->nonline < 0 || chattyStats->ndelivered < 0 ||
         chattyStats->nnotdelivered < 0 || chattyStats->nfiledelivered < 0 || chattyStats->nfilenotdelivered < 0 ||
         chattyStats->nerrors < 0){
             printf("error: illegal stat value\n");
-
-            THREAD(pthread_mutex_unlock(&mtex_stats), "unlock in update_stats");
     }
     THREAD(pthread_mutex_unlock(&mtex_stats), "unlock in update_stats");
 }
@@ -423,7 +453,7 @@ void *run_listener(void * arg){
                             THREAD(pthread_mutex_unlock(&mtex_set), "unlock in run_listener");
 
                             printf("connessione del fd %d rifiutata: limite massimo di connessioni raggiunto\n", fd);
-                            update_stats(&chattyStats, 0, 0, 0, 0, 0, 0, 1); //si aggiunge 1 al numero degli errori
+                            update_stats(&chattyStats, NERRORS, 1); //si aggiunge 1 al numero degli errori
                         } else{
 
                             THREAD(pthread_mutex_unlock(&mtex_stats), "unlock in run_listener");
@@ -523,24 +553,23 @@ void* run_pool_element(void *arg){
                 printf("richiesta illegale, la statistica degli utenti connessi non deve essere aggiornata\n");
             } else if (-1 == ans){ //operazione richiesta dall'utente fallita
 
-                printf("errore nell'elaborazione del messaggio, %d non verra' aggiunto nuovamente alla coda\n", fd);
+                printf("errore nell'elaborazione della richiesta, non verranno elaborate successive richieste di %d\n", fd);
 
                 if (user_list->numb_elems > 0) {
                     //l'utente viene disconnesso (e quindi eliminato dalla lista dei connessi)
                     user_list = deleteFdFromList(user_list, fd);
 
-                    update_stats(&chattyStats, 0, -1, 0, 0, 0, 0, 0);//diminuisco il numero degli utenti connessi
+                    update_stats(&chattyStats, NONLINE, -1);//diminuisco il numero degli utenti connessi
                 }
 
             } else if (0 == ans){
-                //printf("elaborazione del messaggio avvenuta con successo, %d verra' aggiunto nuovamente alla coda\n", fd);
 
                 THREAD(pthread_mutex_lock(&mtex_set), "lock in run_pool_element");
                 FD_SET(fd, &set);
                 THREAD(pthread_mutex_unlock(&mtex_set), "unlock in run_pool_element");
 
             } else if (ans > 0) {
-                printf("il destinatario di %d ha la history piena, elaborazione del messaggio fallita ma %d verra' aggiunto nuovamente alla coda\n", fd, fd);
+                printf("il destinatario di %d ha la history piena, elaborazione della richiesta fallita ma eventuali successive richieste verranno elaborate\n", fd);
 
                 THREAD(pthread_mutex_lock(&mtex_set), "lock in run_pool_element");
                 FD_SET(fd, &set);
@@ -553,10 +582,10 @@ void* run_pool_element(void *arg){
             user_list = deleteFdFromList(user_list, fd);
 
             if (0 < chattyStats.nonline) {
-                update_stats(&chattyStats, 0, -1, 0, 0, 0, 0, 0);//diminuisco il numero degli utenti connessi
+                update_stats(&chattyStats, NONLINE, -1);//diminuisco il numero degli utenti connessi
             }
 
-            printf("lettura su %d terminata, il fd non verra' aggiunto nuovamente alla coda\n", fd);
+            printf("lettura su %d terminata\n", fd);
         }
     }
 
@@ -578,7 +607,7 @@ int elab_request(int fd_c, message_t message){
         printf("errore: fallimento lettura dati\n");
         free(message.data.buf);
         free(sender);
-        update_stats(&chattyStats, 0, 0, 0, 0, 0, 0, 1); //aumento il numero degli errori
+        update_stats(&chattyStats, NERRORS, 1); //aumento il numero degli errori
 
         return -1;
     }
@@ -606,7 +635,7 @@ int elab_request(int fd_c, message_t message){
                 free_userdata(usrdt);
 
                 return -2;
-                update_stats(&chattyStats, 0, 0, 0, 0, 0, 0, 1); //aumento il numero degli errori
+                update_stats(&chattyStats, NERRORS, 1); //aumento il numero degli errori
             }
 
 
@@ -620,7 +649,7 @@ int elab_request(int fd_c, message_t message){
                 setHeader(&reply_msg.hdr, OP_FAIL, "");
                 sendHeader(fd_c, &reply_msg.hdr);
 
-                update_stats(&chattyStats, 0, 0, 0, 0, 0, 0, 1); //aumento il numero degli errori
+                update_stats(&chattyStats, NERRORS, 1); //aumento il numero degli errori
                 free(message.data.buf);
                 free(sender);
                 free_userdata(usrdt);
@@ -638,7 +667,7 @@ int elab_request(int fd_c, message_t message){
                 setHeader(&reply_msg.hdr, OP_NICK_ALREADY, "");
                 sendHeader(fd_c, &reply_msg.hdr);
 
-                update_stats(&chattyStats, 0, 0, 0, 0, 0, 0, 1); //aumento il numero degli errori
+                update_stats(&chattyStats, NERRORS, 1); //aumento il numero degli errori
                 free(message.data.buf);
                 free(sender);
                 free_userdata(usrdt);
@@ -654,7 +683,7 @@ int elab_request(int fd_c, message_t message){
                 setHeader(&reply_msg.hdr, OP_FAIL, "");
                 sendHeader(fd_c, &reply_msg.hdr);
 
-                update_stats(&chattyStats, 0, 0, 0, 0, 0, 0, 1); //aumento il numero degli errori
+                update_stats(&chattyStats, NERRORS, 1); //aumento il numero degli errori
                 free(message.data.buf);
                 free(sender);
                 free_userdata(usrdt);
@@ -664,8 +693,8 @@ int elab_request(int fd_c, message_t message){
 
             //icl_hash_insert ha avuto successo
 
-            update_stats(&chattyStats, 1, 1, 0, 0, 0, 0, 0); //aumento il numero degli utenti registrati e dei connessi
-
+            update_stats(&chattyStats, NUSERS, 1); //aumento il numero degli utenti registrati
+            update_stats(&chattyStats, NONLINE, 1); //aumento il numero degli utenti online
             user_list = insertListHead(user_list, sender, fd_c); //aggiunge il nick e il fd alla lista degli utenti connessi
 
             char *buffer = toBuf(user_list); //memorizza nel buffer da inviare la lista degli utenti connessi
@@ -716,7 +745,7 @@ int elab_request(int fd_c, message_t message){
                 setHeader(&reply_msg.hdr, OP_NICK_UNKNOWN, "");
                 sendHeader(fd_c, &reply_msg.hdr);
 
-                update_stats(&chattyStats, 0, 0, 0, 0, 0, 0, 1); //aumento il numero degli errori
+                update_stats(&chattyStats, NERRORS, 1); //aumento il numero degli errori
                 free(message.data.buf);
                 free(sender);
 
@@ -734,7 +763,7 @@ int elab_request(int fd_c, message_t message){
                 setHeader(&reply_msg.hdr, OP_FAIL, "");
                 sendHeader(fd_c, &reply_msg.hdr);
 
-                update_stats(&chattyStats, 0, 0, 0, 0, 0, 0, 1); //aumento il numero degli errori
+                update_stats(&chattyStats, NERRORS, 1); //aumento il numero degli errori
                 free(message.data.buf);
                 free(sender);
 
@@ -745,7 +774,7 @@ int elab_request(int fd_c, message_t message){
 
 
             //il client riesce a connettersi
-            update_stats(&chattyStats, 0, 1, 0, 0, 0, 0, 0); //aumento il numero degli utenti connessi
+            update_stats(&chattyStats, NONLINE, 1); //aumento il numero degli utenti online
 
             user_list = insertListHead(user_list, sender, fd_c); //aggiunge il nick e il fd alla lista degli utenti connessi
 
@@ -777,7 +806,7 @@ int elab_request(int fd_c, message_t message){
             }
             free(buffer);
             free(message.data.buf);
-            printf("%s: connessione riuscita, egli verra' ascoltato di nuovo\n", sender);
+            printf("%s: connessione riuscita!\n", sender);
             free(sender);
 
         } break;
@@ -798,7 +827,7 @@ int elab_request(int fd_c, message_t message){
                 setHeader(&reply_msg.hdr, OP_NICK_UNKNOWN, "");
                 sendHeader(fd_c, &reply_msg.hdr);
 
-                update_stats(&chattyStats, 0, 0, 0, 0, 0, 0, 1); //aumento il numero degli errori
+                update_stats(&chattyStats, NERRORS, 1); //aumento il numero degli errori
                 free(message.data.buf);
                 free(sender);
 
@@ -814,7 +843,7 @@ int elab_request(int fd_c, message_t message){
                 setHeader(&reply_msg.hdr, OP_FAIL, "");
                 sendHeader(fd_c, &reply_msg.hdr);
 
-                update_stats(&chattyStats, 0, 0, 0, 0, 0, 0, 1); //aumento il numero degli errori
+                update_stats(&chattyStats, NERRORS, 1); //aumento il numero degli errori
                 free(message.data.buf);
                 free(sender);
 
@@ -836,7 +865,7 @@ int elab_request(int fd_c, message_t message){
                 setHeader(&reply_msg.hdr, OP_NICK_UNKNOWN, "");
                 sendHeader(fd_c, &reply_msg.hdr);
 
-                update_stats(&chattyStats, 0, 0, 0, 0, 0, 0, 1); //aumento il numero degli errori
+                update_stats(&chattyStats, NERRORS, 1); //aumento il numero degli errori
                 free(message.data.buf);
                 free(sender);
 
@@ -852,7 +881,7 @@ int elab_request(int fd_c, message_t message){
                 setHeader(&reply_msg.hdr, OP_MSG_TOOLONG, "");
                 sendHeader(fd_c, &reply_msg.hdr);
 
-                update_stats(&chattyStats, 0, 0, 0, 0, 0, 0, 1); //aumento il numero degli errori
+                update_stats(&chattyStats, NERRORS, 1); //aumento il numero degli errori
                 free(message.data.buf);
                 free(sender);
 
@@ -875,8 +904,7 @@ int elab_request(int fd_c, message_t message){
 
                 printf("il destinatario e' offline, aggiungo il messaggio alla lista dei messaggi che deve leggere\n");
 
-                update_stats(&chattyStats, 0, 0, 0, 1, 0, 0, 0); //aumento il numero dei messaggi non letti
-
+                update_stats(&chattyStats, NNOTDELIVERED, 1); //aumento il numero dei messaggi non letti
                 //aggiorno la history del destinatario e marco il messaggio come non letto
                 if (-1 == add_to_history(dest, &msg_to_deliver, 0, 0)){
 
@@ -898,8 +926,7 @@ int elab_request(int fd_c, message_t message){
 
                 printf("il destinatario e' online, messaggio inviato con successo\n");
 
-                update_stats(&chattyStats, 0, 0, 1, 0, 0, 0, 0);//aumento il numero dei messaggi letti
-
+                update_stats(&chattyStats, NDELIVERED, 1); //aumento il numero dei messaggi letti
                 //aggiorno la history del destinatario e marco il messaggio come letto
                 if (-1 == add_to_history(dest, &msg_to_deliver, 1, 0)){
 
@@ -924,7 +951,7 @@ int elab_request(int fd_c, message_t message){
                 return -1;
             }
             free(message.data.buf);
-            printf("%s: post messaggio riuscita, egli verra' ascoltato di nuovo\n", sender);
+            printf("%s: post messaggio riuscita!\n", sender);
             free(sender);
 
         } break;
@@ -946,7 +973,7 @@ int elab_request(int fd_c, message_t message){
                 setHeader(&reply_msg.hdr, OP_NICK_UNKNOWN, "");
                 sendHeader(fd_c, &reply_msg.hdr);
 
-                update_stats(&chattyStats, 0, 0, 0, 0, 0, 0, 1); //aumento il numero degli errori
+                update_stats(&chattyStats, NERRORS, 1); //aumento il numero degli errori
                 free(message.data.buf);
                 free(sender);
 
@@ -962,7 +989,7 @@ int elab_request(int fd_c, message_t message){
                 setHeader(&reply_msg.hdr, OP_FAIL, "");
                 sendHeader(fd_c, &reply_msg.hdr);
 
-                update_stats(&chattyStats, 0, 0, 0, 0, 0, 0, 1); //aumento il numero degli errori
+                update_stats(&chattyStats, NERRORS, 1); //aumento il numero degli errori
                 free(message.data.buf);
                 free(sender);
 
@@ -979,7 +1006,7 @@ int elab_request(int fd_c, message_t message){
                 setHeader(&reply_msg.hdr, OP_MSG_TOOLONG, "");
                 sendHeader(fd_c, &reply_msg.hdr);
 
-                update_stats(&chattyStats, 0, 0, 0, 0, 0, 0, 1); //aumento il numero degli errori
+                update_stats(&chattyStats, NERRORS, 1); //aumento il numero degli errori
                 free(message.data.buf);
                 free(sender);
 
@@ -1004,7 +1031,8 @@ int elab_request(int fd_c, message_t message){
 
             //aumento sia il numero dei messaggi consegnati che quelli non consegnati
             //in accordo all'aggiornamento dei contatori nonline e noffline fatto da add_to_history_all
-            update_stats(&chattyStats, 0, 0, nonline, noffline, 0, 0, 0);
+            update_stats(&chattyStats, NDELIVERED, nonline);
+            update_stats(&chattyStats, NNOTDELIVERED, noffline);
 
             printf("i messaggi consegnati con successo sono %d, quelli non consegnati sono %d\n", nonline, noffline);
 
@@ -1015,7 +1043,7 @@ int elab_request(int fd_c, message_t message){
                 return -1;
             }
             free(message.data.buf);
-            printf("%s: post messaggio a tutti riuscita, egli verra' ascoltato di nuovo\n", sender);
+            printf("%s: post messaggio a tutti riuscita!\n", sender);
             free(sender);
 
         } break;
@@ -1038,7 +1066,7 @@ int elab_request(int fd_c, message_t message){
                 sendHeader(fd_c, &reply_msg.hdr);
 
                 printf("%s: richiesta di post di un file fallita perche l'utente non e; regisrato\n", sender);
-                update_stats(&chattyStats, 0, 0, 0, 0, 0, 0, 1); //aumento il numero degli errori
+                update_stats(&chattyStats, NERRORS, 1); //aumento il numero degli errori
                 free(message.data.buf);
                 free(sender);
 
@@ -1055,7 +1083,7 @@ int elab_request(int fd_c, message_t message){
                 sendHeader(fd_c, &reply_msg.hdr);
 
                 printf("%s: richiesta di post di un file fallita perche l'utente non e; connesso\n", sender);
-                update_stats(&chattyStats, 0, 0, 0, 0, 0, 0, 1); //aumento il numero degli errori
+                update_stats(&chattyStats, NERRORS, 1); //aumento il numero degli errori
                 free(message.data.buf);
                 free(sender);
 
@@ -1074,7 +1102,7 @@ int elab_request(int fd_c, message_t message){
                 printf("errore: file troppo grande per essere inviato\n");
 
                 free(fileData.buf);
-                update_stats(&chattyStats, 0, 0, 0, 0, 0, 0, 1);
+                update_stats(&chattyStats, NERRORS, 1); //aumento il numero degli errori
 
                 setHeader(&reply_msg.hdr, OP_MSG_TOOLONG, "");
                 if(sendHeader(fd_c, &reply_msg.hdr) <= 0){
@@ -1106,7 +1134,7 @@ int elab_request(int fd_c, message_t message){
                 sendHeader(fd_c, &reply_msg.hdr);
 
                 free(fileData.buf);
-                update_stats(&chattyStats, 0, 0, 0, 0, 0, 0, 1); //aumento il numero degli errori
+                update_stats(&chattyStats, NERRORS, 1); //aumento il numero degli errori
 
                 printf("%s: richiesta di post di un file fallita perche il destinatario non e; registrato a chatty\n", sender);
                 free(message.data.buf);
@@ -1151,7 +1179,7 @@ int elab_request(int fd_c, message_t message){
 
                 printf("%s: richiesta di post di un file fallita perche fallimento apertura del file\n", sender);
                 free(fileData.buf);
-                update_stats(&chattyStats, 0, 0, 0, 0, 0, 0, 1); //aumento il numero degli errori
+                update_stats(&chattyStats, NERRORS, 1); //aumento il numero degli errori
                 free(message.data.buf);
                 free(sender);
 
@@ -1203,8 +1231,7 @@ int elab_request(int fd_c, message_t message){
 
                 printf("il destinatario e' offline, aggiungo il messaggio file alla lista dei messaggi che deve leggere\n");
 
-                update_stats(&chattyStats, 0, 0, 0, 0, 0, 1, 0); //aumento il numero dei file non consegnati
-
+                update_stats(&chattyStats, NFILENOTDELIVERED, 1); //aumento il numero dei file non consegnati
                 //aggiorno la history del destinatario e marco il messaggio come non letto
                 if (-1 == add_to_history(dest, &msg_to_deliver, 0, 0)){
 
@@ -1227,7 +1254,7 @@ int elab_request(int fd_c, message_t message){
                 printf("il destinatario e' online, messaggio file inviato con successo\n");
 
                 //aumento il numero dei file non consegnati (un file e' consegnato quando l'utente lo riceve a seguito di una GETFILE_OP)
-                update_stats(&chattyStats, 0, 0, 0, 0, 0, 1, 0);
+                update_stats(&chattyStats, NFILENOTDELIVERED, 1);
 
                 //aggiorno la history del destinatario e marco il messaggio come letto
                 if (-1 == add_to_history(dest, &msg_to_deliver, 1, 0)){
@@ -1255,7 +1282,7 @@ int elab_request(int fd_c, message_t message){
                 return -1;
             }
             free(message.data.buf);
-            printf("%s: post file riuscita, egli verra' ascoltato di nuovo\n", sender);
+            printf("%s: post file riuscita!\n", sender);
             free(sender);
 
         } break;
@@ -1277,7 +1304,7 @@ int elab_request(int fd_c, message_t message){
                 setHeader(&reply_msg.hdr, OP_NICK_UNKNOWN, "");
                 sendHeader(fd_c, &reply_msg.hdr);
 
-                update_stats(&chattyStats, 0, 0, 0, 0, 0, 0, 1); //aumento il numero degli errori
+                update_stats(&chattyStats, NERRORS, 1); //aumento il numero degli errori
                 free(message.data.buf);
                 free(sender);
 
@@ -1293,7 +1320,7 @@ int elab_request(int fd_c, message_t message){
                 setHeader(&reply_msg.hdr, OP_FAIL, "");
                 sendHeader(fd_c, &reply_msg.hdr);
 
-                update_stats(&chattyStats, 0, 0, 0, 0, 0, 0, 1); //aumento il numero degli errori
+                update_stats(&chattyStats, NERRORS, 1); //aumento il numero degli errori
                 free(message.data.buf);
                 free(sender);
 
@@ -1330,7 +1357,7 @@ int elab_request(int fd_c, message_t message){
                 setHeader(&reply_msg.hdr, OP_NO_SUCH_FILE, "");
                 sendHeader(fd_c, &reply_msg.hdr);
 
-                update_stats(&chattyStats, 0, 0, 0, 0, 0, 0, 1); //aumento il numero degli errori
+                update_stats(&chattyStats, NERRORS, 1); //aumento il numero degli errori
                 free(message.data.buf);
                 free(sender);
 
@@ -1370,7 +1397,8 @@ int elab_request(int fd_c, message_t message){
             //operazione ha avuto successo
 
             //aumento il numero dei file consegnati e diminuisco quello dei file non consegnati
-            update_stats(&chattyStats, 0, 0, 0, 0, 1, -1, 0);
+            update_stats(&chattyStats, NFILEDELIVERED, 1);
+            update_stats(&chattyStats, NFILENOTDELIVERED, -1);
 
             //setta l'header del messaggio di risposta dal server per il mittente di GETFILE_OP
             setHeader(&reply_msg.hdr, OP_OK, "");
@@ -1395,7 +1423,7 @@ int elab_request(int fd_c, message_t message){
 
             free(buffer);
             free(message.data.buf);
-            printf("%s: get file riuscita, egli verra' ascoltato di nuovo\n", sender);
+            printf("%s: get file riuscita!\n", sender);
             free(sender);
 
         } break;
@@ -1418,7 +1446,7 @@ int elab_request(int fd_c, message_t message){
                 setHeader(&reply_msg.hdr, OP_NICK_UNKNOWN, "");
                 sendHeader(fd_c, &reply_msg.hdr);
 
-                update_stats(&chattyStats, 0, 0, 0, 0, 0, 0, 1); //aumento il numero degli errori
+                update_stats(&chattyStats, NERRORS, 1); //aumento il numero degli errori
                 free(message.data.buf);
                 free(sender);
 
@@ -1433,7 +1461,7 @@ int elab_request(int fd_c, message_t message){
                 setHeader(&reply_msg.hdr, OP_FAIL, "");
                 sendHeader(fd_c, &reply_msg.hdr);
 
-                update_stats(&chattyStats, 0, 0, 0, 0, 0, 0, 1); //aumento il numero degli errori
+                update_stats(&chattyStats, NERRORS, 1); //aumento il numero degli errori
                 free(message.data.buf);
                 free(sender);
 
@@ -1472,11 +1500,12 @@ int elab_request(int fd_c, message_t message){
                 }
             }
 
-            printf("l'utente %s ha ricevuto lo storico messaggi con successo\n", sender);
+            printf("l'utente %s ha ricevuto lo storico messaggi con successo!\n", sender);
             //aggiorno le statistiche: sono stati consegnati read_now messaggi di quelli non ancora letti
-            update_stats(&chattyStats, 0, 0, read_now, (-read_now), 0, 0, 0);
+            update_stats(&chattyStats, NDELIVERED, read_now);
+            update_stats(&chattyStats, NNOTDELIVERED, (-read_now));
+
             free(message.data.buf);
-            printf("%s: get dello storico riuscita, egli verra' ascoltato di nuovo\n", sender);
             free(sender);
 
         } break;
@@ -1498,7 +1527,7 @@ int elab_request(int fd_c, message_t message){
                 setHeader(&reply_msg.hdr, OP_NICK_UNKNOWN, "");
                 sendHeader(fd_c, &reply_msg.hdr);
 
-                update_stats(&chattyStats, 0, 0, 0, 0, 0, 0, 1); //aumento il numero degli errori
+                update_stats(&chattyStats, NERRORS, 1); //aumento il numero degli errori
                 free(message.data.buf);
                 free(sender);
 
@@ -1513,7 +1542,7 @@ int elab_request(int fd_c, message_t message){
                 setHeader(&reply_msg.hdr, OP_FAIL, "");
                 sendHeader(fd_c, &reply_msg.hdr);
 
-                update_stats(&chattyStats, 0, 0, 0, 0, 0, 0, 1); //aumento il numero degli errori
+                update_stats(&chattyStats, NERRORS, 1); //aumento il numero degli errori
                 free(message.data.buf);
                 free(sender);
 
@@ -1546,7 +1575,7 @@ int elab_request(int fd_c, message_t message){
             }
             free(message.data.buf);
             free(buffer);
-            printf("%s: get lista utenti riuscita, egli verra' ascoltato di nuovo\n", sender);
+            printf("%s: get lista utenti riuscita!\n", sender);
             free(sender);
 
         } break;
@@ -1568,7 +1597,7 @@ int elab_request(int fd_c, message_t message){
                 setHeader(&reply_msg.hdr, OP_NICK_UNKNOWN, "");
                 sendHeader(fd_c, &reply_msg.hdr);
 
-                update_stats(&chattyStats, 0, 0, 0, 0, 0, 0, 1); //aumento il numero degli errori
+                update_stats(&chattyStats, NERRORS, 1); //aumento il numero degli errori
                 free(message.data.buf);
                 free(sender);
 
@@ -1584,7 +1613,7 @@ int elab_request(int fd_c, message_t message){
                 setHeader(&reply_msg.hdr, OP_FAIL, "");
                 sendHeader(fd_c, &reply_msg.hdr);
 
-                update_stats(&chattyStats, 0, 0, 0, 0, 0, 0, 1); //aumento il numero degli errori
+                update_stats(&chattyStats, NERRORS, 1); //aumento il numero degli errori
                 free(message.data.buf);
                 free(sender);
 
@@ -1594,11 +1623,9 @@ int elab_request(int fd_c, message_t message){
             //l'operazione ha successo
 
             //l'utente viene disconnesso (e quindi eliminato dalla lista dei connessi)
-            printf("numero degli el della lista: %d\n", user_list->numb_elems);
             user_list = deleteNameFromList(user_list, sender);
-            printf("numero degli el della lista: %d\n", user_list->numb_elems);
 
-            update_stats(&chattyStats, 0, -1, 0, 0, 0, 0, 0);//diminuisco il numero degli utenti connessi
+            update_stats(&chattyStats, NONLINE, -1);//diminuisco il numero degli utenti connessi
 
             free_userdata(usrdt); //si libera la memoria allocata per lo storico messaggi
 
@@ -1612,8 +1639,8 @@ int elab_request(int fd_c, message_t message){
                 return -1;
             }
 
-            update_stats(&chattyStats, -1, 0, 0, 0, 0, 0, 0);//diminuisco il numero degli utenti registrati
-
+            //diminuisco il numero degli utenti registrati
+            update_stats(&chattyStats, NUSERS, -1);
 
             setHeader(&reply_msg.hdr, OP_OK, "");
             if (sendHeader(fd_c, &reply_msg.hdr) <= 0) {

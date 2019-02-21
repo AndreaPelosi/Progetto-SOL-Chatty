@@ -120,6 +120,7 @@ list_t *deleteNameFromList(list_t *L, const char *str){
         return L;
     }
 
+    //altrimenti
     while ((NULL != curr) && (0 == trovato)) {
         prec = curr;
         curr = curr->next;
@@ -165,6 +166,7 @@ list_t *deleteFdFromList(list_t *L, int fd){
         return L;
     }
 
+    //altrimenti
     while ((NULL != curr) && (0 == trovato)) {
         prec = curr;
         curr = curr->next;

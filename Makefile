@@ -9,13 +9,11 @@
 ##########################################################
 # IMPORTANTE: completare la lista dei file da consegnare
 # 
-FILE_DA_CONSEGNARE=Makefile chatty.c headers/message.h headers/ops.h \
-		   headers/stats.h headers/config.h headers/conf_parsing.h \
-		   headers/connections.h headers/icl_hash.h headers/liste.h \
-		   headers/macrosctest.h headers/macrothread.h headers/user.h \
-		   client.c conf_parsing.c connections.c icl_hash.c liste.c \
-		   user.c Doxyfile script.sh tesconf.sh testfile.sh testleaks.sh \
-		   teststress.sh  DATA/chatty.conf1 DATA/chatty.conf2
+FILE_DA_CONSEGNARE=Makefile chatty.c headers/ client.c conf_parsing.c \
+		   connections.c icl_hash.c liste.c user.c Doxyfile script.sh \
+		   testconf.sh testfile.sh testleaks.sh teststress.sh \
+		   DATA/chatty.conf1 DATA/chatty.conf2 documentazione_Doxygen \
+		   Relazione.pdf 
 # inserire il nome del tarball: es. NinoBixio
 TARNAME=AndreaPelosi
 # inserire il corso di appartenenza: CorsoA oppure CorsoB
