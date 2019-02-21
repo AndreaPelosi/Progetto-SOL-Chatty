@@ -43,6 +43,16 @@ struct statistics {
 
 /* aggiungere qui altre funzioni di utilita' per le statistiche */
 
+typedef enum {
+
+    NUSERS = 0,
+    NONLINE = 1,
+    NDELIVERED = 2,
+    NNOTDELIVERED = 3,
+    NFILEDELIVERED = 4,
+    NFILENOTDELIVERED = 5,
+    NERRORS = 6
+} stats;
 
 /**
  * @function printStats
